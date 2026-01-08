@@ -1,0 +1,14 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: G1Dance1Subject2
+
+robot: 
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+
+command:
+  root_body_name: "pelvis"
+  data_path: data/motion/lafan/dance1_subject2-270_1000

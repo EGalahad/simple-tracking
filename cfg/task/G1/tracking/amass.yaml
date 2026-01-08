@@ -1,0 +1,19 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: amass
+
+robot: 
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+
+command:
+  root_body_name: "pelvis"
+  data_path: data/AMASS_hdmi
+  sample_motion: True
+  # data_path: data/AMASS_hdmi/WEIZMANN/67/Normal_Free(8)_stageii/1000_2000
+  # data_path: data/AMASS_hdmi/KIT/575/MarcusS_AdrianM05_stageii/8000_9000
+  # data_path: data/AMASS_hdmi/CMU/06/06_12_stageii/0_586/motion.npz
+  # data_path: data/AMASS_hdmi/CMU/17/17_08_stageii/0_1000/motion.npz

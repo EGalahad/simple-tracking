@@ -1,0 +1,38 @@
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
+  job:
+    chdir: true
+
+headless: true
+exp_name: ${oc.select:task.name,test}-${oc.select:algo.name,none}
+
+app:
+  headless: ${..headless}
+  enable_cameras: ${..eval_render}
+
+# total_frames: 300_000_000
+total_frames: 200_000_000
+eval_render: false
+save_interval: 150
+seed: 0
+checkpoint_path: null
+vecnorm: ${oc.select:algo.vecnorm,train}
+
+camera_follow: true
+
+wandb:
+  name: ${..exp_name}/${now:%m-%d}_${now:%H-%M}
+  job_type: train
+  project: hdmi
+  mode: online # set to 'disabled' when debugging locally
+  tags: []
+
+defaults:
+  - task: G1/G1Track-walk
+  - algo: ppo_roa_train
+  - _self_
+
+stages:
+  - ppo_roa_train
+  - ppo_roa_finetune

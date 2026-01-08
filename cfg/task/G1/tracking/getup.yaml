@@ -1,0 +1,24 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: lafan-getup
+
+robot: 
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+
+action:
+  _target_: active_adaptation.envs.mdp.actions.joint_position.JointPosition
+  action_scaling:
+    .*_wrist_roll_joint: 0.44
+    .*_wrist_pitch_joint: 0.07
+    .*_wrist_yaw_joint: 0.07
+
+command:
+  root_body_name: "pelvis"
+  data_path: data/lafan_hdmi/fallAndGetUp2_subject3-0-2000
+  sample_motion: False
+  pose_range:
+    z: [-0.05, 0.15]

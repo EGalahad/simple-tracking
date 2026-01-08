@@ -1,0 +1,24 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: G1TrackWalk
+
+# observation:
+#   command_:
+#     ref_joint_pos_future:  {}
+#     ref_body_pos_future_local: {}
+
+robot: 
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+
+command:
+  root_body_name: "pelvis"
+  data_path: data/motion/g1/walk1_subject1-3_12
+
+  pose_range:
+    x: [-0.0, 0.0]
+    y: [-0.0, 0.0]
+    yaw: [-0.0, 0.0]

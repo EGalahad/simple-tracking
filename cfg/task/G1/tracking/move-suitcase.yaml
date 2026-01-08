@@ -1,0 +1,14 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: G1TrackSuitcase
+
+robot:
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+ 
+command:
+  data_path: data/motion/g1/omomo/sub1_suitcase_011
+  root_body_name: "pelvis"

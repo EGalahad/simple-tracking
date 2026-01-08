@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "active_adaptation"
+version = "0.1.0"
+description = "Active adaptation for robotics"
+readme = "README.md"
+requires-python = "==3.12.*"
+authors = [
+    {name = "Haoyang Weng"}
+]
+keywords = ["robotics", "rl"]
+dependencies = [
+    "hydra-core",
+    "omegaconf",
+    "wandb",
+    "moviepy",
+    "imageio",
+    "einops",
+    "av", # for moviepy
+    "pandas",
+    "termcolor",
+    "setproctitle",
+    # "pygame", # for game controller
+    "mujoco",
+    "xxhash",
+    "onnxscript",
+    "onnxruntime",
+    "torch==2.7.0",
+    "torchrl==0.7.0",
+    "tensordict==0.7.0",
+    "mjlab",
+    "mujoco-warp",
+    "pdbpp>=0.11.7",
+    "black>=25.12.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.uv.sources]
+mjlab = { git = "https://github.com/mujocolab/mjlab", rev = "main" }
+mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp", rev = "9491175b7cbea87e28d3e3e67733095317c33398" }
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]

@@ -1,0 +1,14 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: G1CarryAndPlaceBreadBox
+
+robot:
+  name: g1
+  robot_type: g1_29dof_nohand-feet_sphere
+
+command:
+  data_path: data/motion/data_for_sim/carry_and_place_bread_box
+  root_body_name: "pelvis"
