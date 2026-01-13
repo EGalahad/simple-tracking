@@ -191,7 +191,7 @@ def main(cfg):
     env.base_env.eval()
     td_ = env.reset()
     assert not env.base_env.training
-    with torch.inference_mode(), set_exploration_type(ExplorationType.RANDOM):
+    with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
         torch.compiler.cudagraph_mark_step_begin()
         for i in itertools.count():
             td_ = rollout_policy(td_)
