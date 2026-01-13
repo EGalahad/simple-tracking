@@ -47,6 +47,18 @@ uv run scripts/train.py algo=ppo_roa_train task=G1/tracking/amass
 uv run scripts/train.py algo=ppo_roa_train task=G1/tracking/lafan
 ```
 
+Student policy 
+```bash
+uv run scripts/train.py algo=ppo_roa_finetune task=G1/tracking/lafan
+```
+
+Play policy
+```bash
+uv run scripts/play.py algo=ppo_roa_play task=G1/tracking/lafan checkpoint_path=run:<wandb_run_path>
+```
+
+add `export_policy=true` to export onnx model.
+
 ## Sim2Real
 
 Please see [github.com/EGalahad/sim2real](https://github.com/EGalahad/sim2real) for details.
