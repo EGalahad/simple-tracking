@@ -11,10 +11,9 @@ exp_name: ${oc.select:task.name,test}-${oc.select:algo.name,none}
 #   headless: ${..headless}
 #   enable_cameras: ${..eval_render}
 
-# total_frames: 300_000_000
-total_frames: 150_000_000
+total_iters: 4000
 eval_render: false
-save_interval: 300
+save_interval: 1000
 seed: 0
 checkpoint_path: null
 vecnorm: ${oc.select:algo.vecnorm,train}
@@ -30,5 +29,5 @@ wandb:
 
 defaults:
   - task: G1/G1Track-walk
-  - algo: ppo
+  - algo: ppo_roa_train
   - _self_

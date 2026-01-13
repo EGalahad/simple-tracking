@@ -1,17 +1,15 @@
 import torch
 import hydra
 import numpy as np
-import einops
 import itertools
 import os
-import datetime
 import re
 from omegaconf import OmegaConf
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
 
-from active_adaptation.utils.export import export_onnx
+from active_adaptation.utils.export import export_onnx, get_asset_meta
 from active_adaptation.utils.wandb import parse_checkpoint_path
 
 
@@ -89,49 +87,20 @@ def main(cfg):
             obs_cfg[k] = dict_cfg["task"]["observation"][k]
         policy_config["observation"] = obs_cfg
 
-        ## action
-        policy_config["action_scale"] = dict_cfg["task"]["action"]["action_scaling"]
-
-        ## joint names and stiffness/damping
-        from active_adaptation.assets import get_asset_meta
-
+        ## control
         asset_meta = get_asset_meta(env.scene["robot"])
-        policy_config["joint_names"] = asset_meta["joint_names"]
-        joint_kp, joint_kd = {}, {}
-        for actuator_name, actuator in asset_meta["actuators"].items():
-            stiffness = actuator["stiffness"]
-            if isinstance(stiffness, float):
-                joint_name_expr = actuator["joint_names_expr"]
-                if not isinstance(joint_name_expr, list):
-                    joint_name_expr = [joint_name_expr]
-                for joint_name in joint_name_expr:
-                    joint_kp.update({joint_name: stiffness})
-            elif isinstance(stiffness, dict):
-                joint_kp.update(stiffness)
-            else:
-                raise ValueError(f"Unsupported stiffness type: {type(stiffness)}")
+        policy_config["asset_joint_names"] = asset_meta["joint_names"]
+        policy_config["joint_kp"] = asset_meta["joint_kp"]
+        policy_config["joint_kd"] = asset_meta["joint_kd"]
+        policy_config["default_joint_pos"] = asset_meta["default_joint_pos"]
 
-            damping = actuator["damping"]
-            if isinstance(damping, float):
-                joint_name_expr = actuator["joint_names_expr"]
-                if not isinstance(joint_name_expr, list):
-                    joint_name_expr = [joint_name_expr]
-                for joint_name in joint_name_expr:
-                    joint_kd.update({joint_name: damping})
-            elif isinstance(damping, dict):
-                joint_kd.update(damping)
-            else:
-                raise ValueError(f"Unsupported damping type: {type(damping)}")
-
-        policy_config["joint_kp"] = joint_kp
-        policy_config["joint_kd"] = joint_kd
-        policy_config["default_joint_pos"] = asset_meta["init_state"]["joint_pos"]
-
-        ## policy joint names
+        ## action
         from active_adaptation.envs.mdp.actions.joint_position import JointPosition
 
         action_manager: JointPosition = env.action_manager
         policy_config["policy_joint_names"] = action_manager.joint_names
+        # policy_config["action_scale"] = dict_cfg["task"]["action"]["action_scaling"]
+        policy_config["action_scale"] = action_manager.action_scaling.cpu().tolist()
 
         ## command
         command = env.command_manager
@@ -222,7 +191,7 @@ def main(cfg):
     env.base_env.eval()
     td_ = env.reset()
     assert not env.base_env.training
-    with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
+    with torch.inference_mode(), set_exploration_type(ExplorationType.RANDOM):
         torch.compiler.cudagraph_mark_step_begin()
         for i in itertools.count():
             td_ = rollout_policy(td_)

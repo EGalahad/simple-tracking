@@ -104,26 +104,32 @@ class keypoint_pos_tracking_local_product(_tracking_keypoint):
             :, self.body_indices_motion
         ]
 
-        root_pos_asset = self.command_manager.robot_root_link_pos_w.clone()
-        root_pos_motion = self.command_manager.ref_root_link_pos_w.clone()
-        root_quat_asset = self.command_manager.robot_root_link_quat_w
-        root_quat_motion = self.command_manager.ref_root_link_quat_w
+        anchor_pos_asset = self.command_manager.robot_anchor_link_pos_w.clone()
+        anchor_pos_motion = self.command_manager.ref_anchor_link_pos_w.clone()
+        anchor_quat_asset = self.command_manager.robot_anchor_link_quat_w
+        anchor_quat_motion = self.command_manager.ref_anchor_link_quat_w
 
-        root_pos_asset[..., 2] = 0.0
-        root_pos_motion[..., 2] = 0.0
-        root_quat_asset = yaw_quat(root_quat_asset)
-        root_quat_motion = yaw_quat(root_quat_motion)
+        anchor_pos_asset[..., 2] = 0.0
+        anchor_pos_motion[..., 2] = 0.0
+        anchor_quat_asset = yaw_quat(anchor_quat_asset)
+        anchor_quat_motion = yaw_quat(anchor_quat_motion)
 
-        root_pos_asset = root_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_pos_motion = root_pos_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_asset = root_quat_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_motion = root_quat_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_asset = anchor_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_motion = anchor_pos_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_asset = anchor_quat_asset.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_motion = anchor_quat_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
 
         body_pos_asset_relative = quat_apply_inverse(
-            root_quat_asset, body_pos_asset - root_pos_asset
+            anchor_quat_asset, body_pos_asset - anchor_pos_asset
         )
         body_pos_motion_relative = quat_apply_inverse(
-            root_quat_motion, body_pos_motion - root_pos_motion
+            anchor_quat_motion, body_pos_motion - anchor_pos_motion
         )
 
         diff = body_pos_motion_relative - body_pos_asset_relative
@@ -140,26 +146,32 @@ class keypoint_pos_tracking_local_product(_tracking_keypoint):
             :, self.body_indices_motion
         ]
 
-        root_pos_asset = self.command_manager.robot_root_link_pos_w.clone()
-        root_pos_motion = self.command_manager.ref_root_link_pos_w.clone()
-        root_quat_asset = self.command_manager.robot_root_link_quat_w
-        root_quat_motion = self.command_manager.ref_root_link_quat_w
+        anchor_pos_asset = self.command_manager.robot_anchor_link_pos_w.clone()
+        anchor_pos_motion = self.command_manager.ref_anchor_link_pos_w.clone()
+        anchor_quat_asset = self.command_manager.robot_anchor_link_quat_w
+        anchor_quat_motion = self.command_manager.ref_anchor_link_quat_w
 
-        root_pos_asset[..., 2] = 0.0
-        root_pos_motion[..., 2] = 0.0
-        root_quat_asset = yaw_quat(root_quat_asset)
-        root_quat_motion = yaw_quat(root_quat_motion)
+        anchor_pos_asset[..., 2] = 0.0
+        anchor_pos_motion[..., 2] = 0.0
+        anchor_quat_asset = yaw_quat(anchor_quat_asset)
+        anchor_quat_motion = yaw_quat(anchor_quat_motion)
 
-        root_pos_asset = root_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_pos_motion = root_pos_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_asset = root_quat_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_motion = root_quat_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_asset = anchor_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_motion = anchor_pos_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_asset = anchor_quat_asset.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_motion = anchor_quat_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
 
         body_pos_asset_relative = quat_apply_inverse(
-            root_quat_asset, body_pos_asset - root_pos_asset
+            anchor_quat_asset, body_pos_asset - anchor_pos_asset
         )
         body_pos_motion_relative = quat_apply_inverse(
-            root_quat_motion, body_pos_motion - root_pos_motion
+            anchor_quat_motion, body_pos_motion - anchor_pos_motion
         )
         # self.env._debug_draw.vector(
         #     root_pos_asset,
@@ -209,26 +221,32 @@ class keypoint_pos_error_local(_tracking_keypoint):
             :, self.body_indices_motion
         ]
 
-        root_pos_asset = self.command_manager.robot_root_link_pos_w.clone()
-        root_pos_motion = self.command_manager.ref_root_link_pos_w.clone()
-        root_quat_asset = self.command_manager.robot_root_link_quat_w
-        root_quat_motion = self.command_manager.ref_root_link_quat_w
+        anchor_pos_asset = self.command_manager.robot_anchor_link_pos_w.clone()
+        anchor_pos_motion = self.command_manager.ref_anchor_link_pos_w.clone()
+        anchor_quat_asset = self.command_manager.robot_anchor_link_quat_w
+        anchor_quat_motion = self.command_manager.ref_anchor_link_quat_w
 
-        root_pos_asset[..., 2] = 0.0
-        root_pos_motion[..., 2] = 0.0
-        root_quat_asset = yaw_quat(root_quat_asset)
-        root_quat_motion = yaw_quat(root_quat_motion)
+        anchor_pos_asset[..., 2] = 0.0
+        anchor_pos_motion[..., 2] = 0.0
+        anchor_quat_asset = yaw_quat(anchor_quat_asset)
+        anchor_quat_motion = yaw_quat(anchor_quat_motion)
 
-        root_pos_asset = root_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_pos_motion = root_pos_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_asset = root_quat_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_motion = root_quat_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_asset = anchor_pos_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_pos_motion = anchor_pos_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_asset = anchor_quat_asset.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_motion = anchor_quat_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
 
         body_pos_asset_relative = quat_apply_inverse(
-            root_quat_asset, body_pos_asset - root_pos_asset
+            anchor_quat_asset, body_pos_asset - anchor_pos_asset
         )
         body_pos_motion_relative = quat_apply_inverse(
-            root_quat_motion, body_pos_motion - root_pos_motion
+            anchor_quat_motion, body_pos_motion - anchor_pos_motion
         )
 
         diff = body_pos_motion_relative - body_pos_asset_relative
@@ -263,20 +281,24 @@ class keypoint_ori_tracking_local_product(_tracking_keypoint):
             :, self.body_indices_motion
         ]
 
-        root_quat_asset = self.command_manager.robot_root_link_quat_w
-        root_quat_motion = self.command_manager.ref_root_link_quat_w
+        anchor_quat_asset = self.command_manager.robot_anchor_link_quat_w
+        anchor_quat_motion = self.command_manager.ref_anchor_link_quat_w
 
-        root_quat_asset = yaw_quat(root_quat_asset)
-        root_quat_motion = yaw_quat(root_quat_motion)
+        anchor_quat_asset = yaw_quat(anchor_quat_asset)
+        anchor_quat_motion = yaw_quat(anchor_quat_motion)
 
-        root_quat_asset = root_quat_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_motion = root_quat_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_quat_asset = anchor_quat_asset.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_motion = anchor_quat_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
 
         body_ori_asset_relative = quat_mul(
-            quat_conjugate(root_quat_asset), body_ori_asset
+            quat_conjugate(anchor_quat_asset), body_ori_asset
         )
         body_ori_motion_relative = quat_mul(
-            quat_conjugate(root_quat_motion), body_ori_motion
+            quat_conjugate(anchor_quat_motion), body_ori_motion
         )
 
         diff = quat_mul(
@@ -314,20 +336,24 @@ class keypoint_ori_error_local(_tracking_keypoint):
             :, self.body_indices_motion
         ]
 
-        root_quat_asset = self.command_manager.robot_root_link_quat_w
-        root_quat_motion = self.command_manager.ref_root_link_quat_w
+        anchor_quat_asset = self.command_manager.robot_anchor_link_quat_w
+        anchor_quat_motion = self.command_manager.ref_anchor_link_quat_w
 
-        root_quat_asset = yaw_quat(root_quat_asset)
-        root_quat_motion = yaw_quat(root_quat_motion)
+        anchor_quat_asset = yaw_quat(anchor_quat_asset)
+        anchor_quat_motion = yaw_quat(anchor_quat_motion)
 
-        root_quat_asset = root_quat_asset.unsqueeze(1).expand(-1, self.num_bodies, -1)
-        root_quat_motion = root_quat_motion.unsqueeze(1).expand(-1, self.num_bodies, -1)
+        anchor_quat_asset = anchor_quat_asset.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
+        anchor_quat_motion = anchor_quat_motion.unsqueeze(1).expand(
+            -1, self.num_bodies, -1
+        )
 
         body_ori_asset_relative = quat_mul(
-            quat_conjugate(root_quat_asset), body_ori_asset
+            quat_conjugate(anchor_quat_asset), body_ori_asset
         )
         body_ori_motion_relative = quat_mul(
-            quat_conjugate(root_quat_motion), body_ori_motion
+            quat_conjugate(anchor_quat_motion), body_ori_motion
         )
 
         diff = quat_mul(

@@ -25,65 +25,28 @@ HDMI is a novel framework that enables humanoid robots to acquire diverse whole-
 This repository contains the official training code of **HDMI: Learning Interactive Humanoid Whole-Body Control from Human Videos**.
 
 
-## TODO
-- [x] Release hdmi training code 
-- [x] hoi motion datasets
-- [x] Release pretrained models
-- [x] Release sim2real code
-
-
 ## 🚀 Quick Start
 
-```bash
-# setup conda environment
-conda create -n hdmi python=3.11 -y
-conda activate hdmi
+Setup virtual environment with `uv sync` and apply mjlab patch (venv files)
 
-# install mjlab (my fork)
-git clone git@github.com:EGalahad/mjlab.git
-cd mjlab
-pip install -e .
-
-# install hdmi
-cd ..
-git clone https://github.com/EGalahad/hdmi
-cd hdmi
-git checkout mjlab
-pip install -e .
-
-```
-
-Alternative way (`uv`)
-
-```bash
-uv sync
-```
-
-Local mjlab patch (venv files)
 ```bash
 patch --forward -p0 < patches/mjlab_local.patch
 ```
 
-## Train and Evaluate
+### Prepare Data
+
+AMASS data: refer to https://github.com/Axellwppr/gentle-humanoid-training. use `scripts/data_process/generate_amass_dataset.py` to convert to HDMI format.
+
+Lafan data: refer to https://github.com/EGalahad/lafan-process.
+
+### Train and Evaluate
 
 Teacher policy 
 ```bash
-# train policy
-python scripts/train.py algo=ppo_roa_train task=G1/hdmi/move_suitcase
-# evaluate policy
-python scripts/play.py algo=ppo_roa_train task=G1/hdmi/move_suitcase checkpoint_path=run:<wandb-run-path>
-
-# or use uv run
-uv run scripts/train.py algo=ppo_roa_train task=G1/hdmi/move_suitcase
+uv run scripts/train.py algo=ppo_roa_train task=G1/tracking/amass
+uv run scripts/train.py algo=ppo_roa_train task=G1/tracking/lafan
 ```
 
-Student policy
-```bash
-# train policy
-python scripts/train.py algo=ppo_roa_finetune task=G1/hdmi/move_suitcase checkpoint_path=run:<teacher_wandb-run-path>
-# evaluate policy
-python scripts/play.py algo=ppo_roa_finetune task=G1/hdmi/move_suitcase checkpoint_path=run:<student_wandb-run-path>
-```
 ## Sim2Real
 
 Please see [github.com/EGalahad/sim2real](https://github.com/EGalahad/sim2real) for details.

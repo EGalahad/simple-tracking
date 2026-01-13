@@ -11,8 +11,8 @@ viewer:
 
 terrain: plane
 
-num_envs: 4096
-max_episode_length: 1000
+num_envs: 8192
+max_episode_length: 4000
 
 sim:
   step_dt: 0.02
@@ -39,9 +39,9 @@ action:
     .*_shoulder_roll_joint: 0.44
     .*_shoulder_yaw_joint: 0.44
     .*_elbow_joint: 0.44
-    # .*_wrist_roll_joint: 0.44
-    # .*_wrist_pitch_joint: 0.07
-    # .*_wrist_yaw_joint: 0.07
+    .*_wrist_roll_joint: 0.44
+    .*_wrist_pitch_joint: 0.07
+    .*_wrist_yaw_joint: 0.07
   min_delay: 2
   max_delay: 6
   alpha: [0.8, 1.0]
@@ -70,7 +70,8 @@ command:
       ".*_elbow_joint"
   ]
 
-  root_body_name: ???
+  root_body_name: "pelvis"
+  anchor_body_name: "torso_link"
 
   pose_range:
     x: [-0.05, 0.05]
@@ -91,7 +92,7 @@ command:
   init_joint_pos_noise: 0.1
   init_joint_vel_noise: 0.1
 
-  future_steps: [1, 2, 4, 8]
+  future_steps: [1, 2, 4, 16]
 
 # Common Observation section
 observation:
@@ -130,22 +131,22 @@ observation:
 reward:
   tracking:
     tracking_root_pos(keypoint_pos_tracking_product):
-      body_names: ["pelvis"]
+      body_names: ["torso_link"]
       weight: 0.5
-      sigma: 0.3
+      sigma: 0.6
     tracking_root_ori(keypoint_ori_tracking_product):
-      body_names: ["pelvis"]
+      body_names: ["torso_link"]
       weight: 0.5
-      sigma: 0.4
+      sigma: 0.8
 
     tracking_body_pos(keypoint_pos_tracking_local_product):
       body_names: [".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link", ".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link"]
       weight: 1.0
-      sigma: 0.3
+      sigma: 0.6
     tracking_body_ori(keypoint_ori_tracking_local_product):
       body_names: [".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link", ".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link"]
       weight: 1.0
-      sigma: 0.4
+      sigma: 0.8
 
     tracking_body_linvel(keypoint_lin_vel_tracking_product):
       body_names: ["pelvis", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link", "torso_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"]
@@ -157,7 +158,7 @@ reward:
       sigma: 2.5
 
   loco:
-    action_rate_l2:     {weight: 0.1, enabled: true}
+    action_rate_l2:     {weight: 0.05, enabled: true}
     joint_pos_limits:   {weight: 10.0, joint_names: ".*", soft_factor: 0.9, enabled: true}
     joint_torque_limits: {weight: 0.01, enabled: true, soft_factor: 0.6}
     feet_slip:          {weight: 0.5, tolerance: 0.0, enabled: true, body_names: .*ankle_roll_link}
@@ -193,8 +194,8 @@ randomization:
 
 # Common Termination section
 termination:
-  cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.5}
-  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.2}
+  cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
+  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
 
-  cum_body_pos_error_local: {body_names: ".*",  min_steps: 25, threshold: 0.5}
-  cum_body_ori_error_local: {body_names: ".*",  min_steps: 25, threshold: 1.2}
+  cum_body_pos_error_local: {body_names: ".*",  min_steps: 25, threshold: 0.8}
+  cum_body_ori_error_local: {body_names: ".*",  min_steps: 25, threshold: 1.6}

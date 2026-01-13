@@ -1,8 +1,11 @@
 from active_adaptation.envs.mdp.observations.base import Observation
 
 import torch
-from active_adaptation.utils.math import EMA
+from active_adaptation.utils.math import EMA, batchify
 from mjlab.utils.lab_api.math import quat_apply_inverse, yaw_quat
+
+quat_apply_inverse = batchify(quat_apply_inverse)
+
 
 from typing import TYPE_CHECKING
 

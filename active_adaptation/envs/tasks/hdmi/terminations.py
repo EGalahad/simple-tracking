@@ -13,6 +13,10 @@ from mjlab.utils.lab_api.math import (
     axis_angle_from_quat,
 )
 
+from active_adaptation.utils.math import batchify
+
+quat_apply_inverse = batchify(quat_apply_inverse)
+
 
 class _cum_error_mixin:
     def __init__(self, min_steps: int = 1, threshold: float = 0.25, **kwargs):
@@ -146,31 +150,31 @@ class cum_body_pos_error_local(_cum_error_mixin, RobotTrackTermination):
         ref_body_link_pos_w = self.command_manager.ref_body_link_pos_w[
             :, self.body_indices_motion
         ]
-        ref_root_link_pos_w = self.command_manager.ref_root_link_pos_w[
+        ref_anchor_link_pos_w = self.command_manager.ref_anchor_link_pos_w[
             :, None, :
         ].clone()
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[:, None, :]
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[:, None, :]
 
         robot_body_link_pos_w = self.command_manager.asset.data.body_link_pos_w[
             :, self.body_indices_asset
         ]
-        robot_root_link_pos_w = self.command_manager.asset.data.root_link_pos_w[
+        robot_anchor_link_pos_w = self.command_manager.robot_anchor_link_pos_w[
             :, None, :
         ].clone()
-        robot_root_link_quat_w = self.command_manager.asset.data.root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]
 
-        ref_root_link_pos_w[..., 2] = 0.0
-        robot_root_link_pos_w[..., 2] = 0.0
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w)
+        ref_anchor_link_pos_w[..., 2] = 0.0
+        robot_anchor_link_pos_w[..., 2] = 0.0
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w)
 
         ref_body_pos_local = quat_apply_inverse(
-            ref_root_link_quat_w, ref_body_link_pos_w - ref_root_link_pos_w
+            ref_anchor_link_quat_w, ref_body_link_pos_w - ref_anchor_link_pos_w
         )
         robot_body_pos_local = quat_apply_inverse(
-            robot_root_link_quat_w, robot_body_link_pos_w - robot_root_link_pos_w
+            robot_anchor_link_quat_w, robot_body_link_pos_w - robot_anchor_link_pos_w
         )
 
         # shape: [num_envs, num_tracking_bodies, 3]
@@ -198,27 +202,27 @@ class cum_body_ori_error_local(_cum_error_mixin, RobotTrackTermination):
         ref_body_link_quat_w = self.command_manager.ref_body_link_quat_w[
             :, self.body_indices_motion
         ]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[:, None, :]
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[:, None, :]
 
         robot_body_link_quat_w = self.command_manager.asset.data.body_link_quat_w[
             :, self.body_indices_asset
         ]
-        robot_root_link_quat_w = self.command_manager.asset.data.root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]
 
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w).expand_as(
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w).expand_as(
             ref_body_link_quat_w
         )
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w).expand_as(
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w).expand_as(
             robot_body_link_quat_w
         )
 
         ref_body_quat_local = quat_mul(
-            quat_conjugate(ref_root_link_quat_w), ref_body_link_quat_w
+            quat_conjugate(ref_anchor_link_quat_w), ref_body_link_quat_w
         )
         robot_body_quat_local = quat_mul(
-            quat_conjugate(robot_root_link_quat_w), robot_body_link_quat_w
+            quat_conjugate(robot_anchor_link_quat_w), robot_body_link_quat_w
         )
 
         # shape: [num_envs, num_tracking_bodies, 3]

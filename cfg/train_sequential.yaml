@@ -11,10 +11,9 @@ app:
   headless: ${..headless}
   enable_cameras: ${..eval_render}
 
-# total_frames: 300_000_000
-total_frames: 200_000_000
+total_iters: 4000
 eval_render: false
-save_interval: 150
+save_interval: 1000
 seed: 0
 checkpoint_path: null
 vecnorm: ${oc.select:algo.vecnorm,train}

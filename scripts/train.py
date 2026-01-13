@@ -1,14 +1,13 @@
 import torch
 
-# import warp
 import hydra
-import numpy as np
-import einops
 import wandb
 import logging
 import os
 import time
 import datetime
+import shutil
+import inspect
 
 from omegaconf import OmegaConf, DictConfig
 from collections import OrderedDict
@@ -18,7 +17,6 @@ from setproctitle import setproctitle
 import active_adaptation as aa
 import mjlab
 
-# from active_adaptation.utils.torchrl import SyncDataCollector
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictModuleBase
 from tensordict import TensorDict
@@ -67,18 +65,12 @@ def main(cfg: DictConfig):
 
     env, policy, vecnorm = make_env_policy(cfg)
 
-    import inspect
-    import shutil
-
     source_path = inspect.getfile(policy.__class__)
     target_path = os.path.join(run.dir, source_path.split("/")[-1])
     shutil.copy(source_path, target_path)
     wandb.save(target_path, policy="now")
 
-    frames_per_batch = env.num_envs * cfg.algo.train_every
-    total_frames = cfg.get("total_frames", -1) // aa.get_world_size()
-    total_frames = total_frames // frames_per_batch * frames_per_batch
-    total_iters = total_frames // frames_per_batch
+    total_iters = cfg.get("total_iters", -1)
     save_interval = cfg.get("save_interval", -1)
 
     log_interval = (env.max_episode_length // cfg.algo.train_every) + 1

@@ -1,0 +1,18 @@
+# @package task
+defaults:
+  - base/tracking-base
+  - _self_
+
+name: lafan
+
+robot: 
+  name: g1
+
+command:
+  root_body_name: "pelvis"
+  data_path: ../lafan-process/output_motion_chunks/
+  # data_path: ../lafan-process/output_motion_chunks/dance1_subject2/0-1000/
+  # data_path: ../lafan-process/output_motion_chunks/fallAndGetUp2_subject3/0-1000/
+  # data_path: ../lafan-process/output_motion_chunks/fallAndGetUp2_subject3/1000-2000/
+  # data_path: ../lafan-process/output_motion_chunks/fallAndGetUp1_subject1/0-1000/
+  # data_path: ../lafan-process/output_motion_chunks/sprint1_subject4/0-1000/

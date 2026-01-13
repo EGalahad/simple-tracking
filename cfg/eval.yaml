@@ -9,7 +9,7 @@ app:
 sim: ${task.sim}
 # env: ${task.env}
 
-total_frames: -1
+total_iters: -1
 max_iters: -1
 eval_interval: -1
 eval_render: false

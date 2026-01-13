@@ -1,6 +1,28 @@
 import torch
 from tensordict import TensorDictBase
 from tensordict.nn import TensorDictModuleBase as ModBase
+from typing import TYPE_CHECKING
+from mjlab.actuator import BuiltinPositionActuatorCfg
+
+if TYPE_CHECKING:
+    from mjlab.entity import Entity
+
+
+def get_asset_meta(asset: "Entity"):
+    meta, joint_kp, joint_kd = {}, {}, {}
+    meta["default_joint_pos"] = asset.cfg.init_state.joint_pos.copy()
+    meta["joint_names"] = asset.joint_names
+
+    for actuator in asset.actuators:
+        assert isinstance(actuator.cfg, BuiltinPositionActuatorCfg)
+        for joint_name in actuator.cfg.target_names_expr:
+            joint_kp.update({joint_name: actuator.cfg.stiffness})
+        for joint_name in actuator.cfg.target_names_expr:
+            joint_kd.update({joint_name: actuator.cfg.damping})
+
+    meta["joint_kp"] = joint_kp
+    meta["joint_kd"] = joint_kd
+    return meta
 
 
 @torch.inference_mode()

@@ -120,11 +120,8 @@ def interpolate(motion, source_fps: int, target_fps: int):
                 f"interpolation is not fully implemented for keys: {extra_keys}"
             )
         T = motion["joint_pos"].shape[0]
-        end_t = T / source_fps
-        ts_source = np.arange(0, end_t, 1 / source_fps)
-        ts_target = np.arange(0, end_t, 1 / target_fps)
-        if ts_target[-1] > ts_source[-1]:
-            ts_target = ts_target[:-1]
+        ts_source = np.linspace(0, T, T)
+        ts_target = np.linspace(0, T, int(T / source_fps * target_fps))
         motion["body_pos_w"] = lerp(
             ts_target, ts_source, motion["body_pos_w"].reshape(T, -1)
         ).reshape(len(ts_target), -1, 3)
@@ -250,11 +247,14 @@ class MotionDataset:
         for path in motion_paths:
             meta_path = path / "meta.json"
             with open(meta_path, "r") as f:
-                metas.append(json.load(f))
+                meta = json.load(f)
+                meta.pop("length", None)
+                metas.append(meta)
 
         # Compare all metas to the first one
         for i, meta in enumerate(metas[1:], 1):
             if meta != metas[0]:
+                breakpoint()
                 raise ValueError(
                     f"meta.json in {motion_paths[i]} differs from {motion_paths[0]}"
                 )

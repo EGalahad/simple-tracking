@@ -11,6 +11,10 @@ from mjlab.utils.lab_api.math import (
     wrap_to_pi,
 )
 
+from active_adaptation.utils.math import batchify
+
+quat_apply_inverse = batchify(quat_apply_inverse)
+
 RobotTrackObservation = BaseObservation[RobotTracking]
 
 
@@ -131,7 +135,7 @@ class ref_root_ori_future_b(RobotTrackObservation):
 
 class ref_body_pos_future_local(RobotTrackObservation):
     """
-    Reference body position in motion root frame
+    Reference body position in motion anchor frame
     """
 
     def __init__(self, **kwargs):
@@ -148,18 +152,17 @@ class ref_body_pos_future_local(RobotTrackObservation):
         ref_body_pos_future_w = (
             self.command_manager.ref_body_pos_future_w
         )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 3]
-        ref_root_link_pos_w = self.command_manager.ref_root_link_pos_w[
-            :, None, None, :
-        ].clone()  # shape: [num_envs, 1, 1, 3]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
-            :, None, None, :
-        ]  # shape: [num_envs, 1, 1, 4]
+        ref_anchor_link_pos_w = self.command_manager.ref_anchor_link_pos_w
+        ref_anchor_link_pos_w = ref_anchor_link_pos_w.unsqueeze(1).unsqueeze(2)
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w
+        ref_anchor_link_quat_w = ref_anchor_link_quat_w.unsqueeze(1).unsqueeze(2)
 
-        ref_root_link_pos_w[..., 2] = 0.0
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
+        ref_anchor_link_pos_w = ref_anchor_link_pos_w.clone()
+        ref_anchor_link_pos_w[..., 2] = 0.0
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
 
         ref_body_pos_future_local = quat_apply_inverse(
-            ref_root_link_quat_w, ref_body_pos_future_w - ref_root_link_pos_w
+            ref_anchor_link_quat_w, ref_body_pos_future_w - ref_anchor_link_pos_w
         )
         self.ref_body_pos_future_local = ref_body_pos_future_local
 
@@ -169,7 +172,7 @@ class ref_body_pos_future_local(RobotTrackObservation):
 
 class ref_body_ori_future_local(RobotTrackObservation):
     """
-    Reference body orientation in motion root frame
+    Reference body orientation in motion anchor frame
     """
 
     def __init__(self, **kwargs):
@@ -184,17 +187,16 @@ class ref_body_ori_future_local(RobotTrackObservation):
         )
 
     def update(self):
-        ref_body_quat_future_w = (
-            self.command_manager.ref_body_quat_future_w
-        )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 4]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
-            :, None, None, :
-        ]  # shape: [num_envs, 1, 1, 4]
+        ref_body_quat_future_w = self.command_manager.ref_body_quat_future_w
+        # shape: [num_envs, num_future_steps, num_tracking_bodies, 4]
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w
+        ref_anchor_link_quat_w = ref_anchor_link_quat_w.unsqueeze(1).unsqueeze(2)
+        # shape: [num_envs, 1, 1, 4]
 
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
 
         ref_body_quat_future_local = quat_mul(
-            quat_conjugate(ref_root_link_quat_w).expand_as(ref_body_quat_future_w),
+            quat_conjugate(ref_anchor_link_quat_w).expand_as(ref_body_quat_future_w),
             ref_body_quat_future_w,
         )
         self.ref_body_ori_future_local = matrix_from_quat(ref_body_quat_future_local)
@@ -205,7 +207,7 @@ class ref_body_ori_future_local(RobotTrackObservation):
 
 class diff_body_pos_future_local(RobotTrackObservation):
     """
-    Reference body position in each motion root frame - Robot body position in robot root frame.
+    Reference body position in each motion anchor frame - Robot body position in robot anchor frame.
     """
 
     def __init__(self, **kwargs):
@@ -222,33 +224,33 @@ class diff_body_pos_future_local(RobotTrackObservation):
         ref_body_pos_future_w = (
             self.command_manager.ref_body_pos_future_w
         )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 3]
-        ref_root_link_pos_w = self.command_manager.ref_root_link_pos_w[
+        ref_anchor_link_pos_w = self.command_manager.ref_anchor_link_pos_w[
             :, None, None, :
         ].clone()  # shape: [num_envs, 1, 1, 3]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[
             :, None, None, :
         ]  # shape: [num_envs, 1, 1, 4]
 
         robot_body_link_pos_w = (
             self.command_manager.robot_body_link_pos_w
         )  # shape: [num_envs, num_tracking_bodies, 3]
-        robot_root_link_pos_w = self.command_manager.robot_root_link_pos_w[
+        robot_anchor_link_pos_w = self.command_manager.robot_anchor_link_pos_w[
             :, None, :
         ].clone()  # shape: [num_envs, 1, 3]
-        robot_root_link_quat_w = self.command_manager.robot_root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]  # shape: [num_envs, 1, 4]
 
-        ref_root_link_pos_w[..., 2] = 0.0
-        robot_root_link_pos_w[..., 2] = 0.0
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w)
+        ref_anchor_link_pos_w[..., 2] = 0.0
+        robot_anchor_link_pos_w[..., 2] = 0.0
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w)
 
         ref_body_pos_future_local = quat_apply_inverse(
-            ref_root_link_quat_w, ref_body_pos_future_w - ref_root_link_pos_w
+            ref_anchor_link_quat_w, ref_body_pos_future_w - ref_anchor_link_pos_w
         )
         robot_body_pos_local = quat_apply_inverse(
-            robot_root_link_quat_w, robot_body_link_pos_w - robot_root_link_pos_w
+            robot_anchor_link_quat_w, robot_body_link_pos_w - robot_anchor_link_pos_w
         )
 
         self.diff_body_pos_future_local = (
@@ -261,7 +263,7 @@ class diff_body_pos_future_local(RobotTrackObservation):
 
 class diff_body_lin_vel_future_local(RobotTrackObservation):
     """
-    Reference body linear velocity in motion root frame - Robot body linear velocity in robot root frame.
+    Reference body linear velocity in motion anchor frame - Robot body linear velocity in robot anchor frame.
     """
 
     def __init__(self, **kwargs):
@@ -278,24 +280,24 @@ class diff_body_lin_vel_future_local(RobotTrackObservation):
         ref_body_lin_vel_future_w = (
             self.command_manager.ref_body_lin_vel_future_w
         )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 3]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[
             :, None, None, :
         ]  # shape: [num_envs, 1, 1, 4]
         robot_body_link_lin_vel_w = (
             self.command_manager.robot_body_com_lin_vel_w
         )  # shape: [num_envs, num_tracking_bodies, 3]
-        robot_root_link_quat_w = self.command_manager.robot_root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]  # shape: [num_envs, 1, 4]
 
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w)
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w)
 
         ref_body_lin_vel_future_local = quat_apply_inverse(
-            ref_root_link_quat_w, ref_body_lin_vel_future_w
+            ref_anchor_link_quat_w, ref_body_lin_vel_future_w
         )
         robot_body_lin_vel_local = quat_apply_inverse(
-            robot_root_link_quat_w, robot_body_link_lin_vel_w
+            robot_anchor_link_quat_w, robot_body_link_lin_vel_w
         )
 
         self.diff_body_lin_vel_future_local = (
@@ -308,7 +310,7 @@ class diff_body_lin_vel_future_local(RobotTrackObservation):
 
 class diff_body_ori_future_local(RobotTrackObservation):
     """
-    Reference body orientation in motion root frame - Robot body orientation in robot root frame.
+    Reference body orientation in motion anchor frame - Robot body orientation in robot anchor frame.
     """
 
     def __init__(self, **kwargs):
@@ -326,25 +328,25 @@ class diff_body_ori_future_local(RobotTrackObservation):
         ref_body_quat_future_w = (
             self.command_manager.ref_body_quat_future_w
         )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 4]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[
             :, None, None, :
         ]  # shape: [num_envs, 1, 1, 4]
         robot_body_link_quat_w = (
             self.command_manager.robot_body_link_quat_w
         )  # shape: [num_envs, num_tracking_bodies, 4]
-        robot_root_link_quat_w = self.command_manager.robot_root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]  # shape: [num_envs, 1, 4]
 
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w)
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w)
 
         ref_body_quat_future_local = quat_mul(
-            quat_conjugate(ref_root_link_quat_w).expand_as(ref_body_quat_future_w),
+            quat_conjugate(ref_anchor_link_quat_w).expand_as(ref_body_quat_future_w),
             ref_body_quat_future_w,
         )
         robot_body_quat_local = quat_mul(
-            quat_conjugate(robot_root_link_quat_w).expand_as(robot_body_link_quat_w),
+            quat_conjugate(robot_anchor_link_quat_w).expand_as(robot_body_link_quat_w),
             robot_body_link_quat_w,
         ).unsqueeze(1)
         diff_body_quat_future = quat_mul(
@@ -361,7 +363,7 @@ class diff_body_ori_future_local(RobotTrackObservation):
 
 class diff_body_ang_vel_future_local(RobotTrackObservation):
     """
-    Reference body linear velocity in motion root frame - Robot body linear velocity in robot root frame.
+    Reference body linear velocity in motion anchor frame - Robot body linear velocity in robot anchor frame.
     """
 
     def __init__(self, **kwargs):
@@ -378,24 +380,24 @@ class diff_body_ang_vel_future_local(RobotTrackObservation):
         ref_body_ang_vel_future_w = (
             self.command_manager.ref_body_ang_vel_future_w
         )  # shape: [num_envs, num_future_steps, num_tracking_bodies, 3]
-        ref_root_link_quat_w = self.command_manager.ref_root_link_quat_w[
+        ref_anchor_link_quat_w = self.command_manager.ref_anchor_link_quat_w[
             :, None, None, :
         ]  # shape: [num_envs, 1, 1, 4]
         robot_body_link_ang_vel_w = (
             self.command_manager.robot_body_com_ang_vel_w
         )  # shape: [num_envs, num_tracking_bodies, 3]
-        robot_root_link_quat_w = self.command_manager.robot_root_link_quat_w[
+        robot_anchor_link_quat_w = self.command_manager.robot_anchor_link_quat_w[
             :, None, :
         ]  # shape: [num_envs, 1, 4]
 
-        ref_root_link_quat_w = yaw_quat(ref_root_link_quat_w)
-        robot_root_link_quat_w = yaw_quat(robot_root_link_quat_w)
+        ref_anchor_link_quat_w = yaw_quat(ref_anchor_link_quat_w)
+        robot_anchor_link_quat_w = yaw_quat(robot_anchor_link_quat_w)
 
         ref_body_ang_vel_future_local = quat_apply_inverse(
-            ref_root_link_quat_w, ref_body_ang_vel_future_w
+            ref_anchor_link_quat_w, ref_body_ang_vel_future_w
         )
         robot_body_ang_vel_local = quat_apply_inverse(
-            robot_root_link_quat_w, robot_body_link_ang_vel_w
+            robot_anchor_link_quat_w, robot_body_link_ang_vel_w
         )
 
         self.diff_body_ang_vel_future_local = (

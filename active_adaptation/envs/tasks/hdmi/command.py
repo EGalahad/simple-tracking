@@ -1,11 +1,14 @@
 from active_adaptation.envs.mdp.commands.base import Command
 from active_adaptation.utils.motion import MotionDataset, MotionData
 
-from typing import List, Dict, Tuple, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, TYPE_CHECKING, Literal
+import copy
 
 if TYPE_CHECKING:
     from mjlab.entity import Entity as Articulation
     from mjlab.entity import Entity as RigidObject
+    from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 import torch
 import numpy as np
@@ -15,8 +18,22 @@ from mjlab.utils.lab_api.math import (
     quat_mul,
     quat_apply,
     quat_apply_inverse,
+    matrix_from_quat,
 )
 from tensordict import TensorDict
+
+
+_DESIRED_FRAME_COLORS = (
+    (0.9, 0.3, 0.3, 0.9),
+    (0.3, 0.9, 0.3, 0.9),
+    (0.3, 0.3, 0.9, 0.9),
+)
+
+
+@dataclass
+class VizCfg:
+    mode: Literal["ghost", "frames"] = "ghost"
+    ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
 
 
 class RobotTracking(Command):
@@ -28,6 +45,7 @@ class RobotTracking(Command):
         tracking_joint_names: List[str],
         # reset parameters
         root_body_name: str = "pelvis",
+        anchor_body_name: str = "torso_link",
         reset_range: Tuple[float, float] | None = None,
         pose_range: Dict[str, Tuple[float, float]] = {
             "x": (-0.0, 0.0),
@@ -53,6 +71,7 @@ class RobotTracking(Command):
         sample_motion: bool = False,
         replay_motion: bool = False,
         record_motion: bool = False,
+        viz: VizCfg | Dict | None = None,
     ):
         from . import observations
         from . import rewards
@@ -92,6 +111,9 @@ class RobotTracking(Command):
         # get root body and joint indices in motion for reset
         self.root_body_name = root_body_name
         self.root_body_idx_motion = self.dataset.body_names.index(root_body_name)
+        self.anchor_body_name = anchor_body_name
+        self.anchor_body_idx_motion = self.dataset.body_names.index(anchor_body_name)
+        self.anchor_body_idx_asset = self.asset.body_names.index(anchor_body_name)
 
         asset_joint_names = self.asset.joint_names
         self.asset_joint_idx_motion = [
@@ -150,6 +172,11 @@ class RobotTracking(Command):
             self.update()
             if self.record_motion:
                 self.motion_frames = []
+
+        if isinstance(viz, dict):
+            viz = VizCfg(**viz)
+        self.viz = viz or VizCfg()
+        self._ghost_model = None
 
     def _sample_motions(self, env_ids: torch.Tensor) -> None:
         if self.sample_motion or self.first_sample_motion:
@@ -358,6 +385,20 @@ class RobotTracking(Command):
             ..., self.root_body_idx_motion, :
         ]
 
+        self.ref_anchor_pos_future_w = (
+            self.future_ref_motion.body_pos_w[..., self.anchor_body_idx_motion, :]
+            + self.env.scene.env_origins[:, None, :]
+        )
+        self.ref_anchor_quat_future_w = self.future_ref_motion.body_quat_w[
+            ..., self.anchor_body_idx_motion, :
+        ]
+        self.ref_anchor_lin_vel_future_w = self.future_ref_motion.body_lin_vel_w[
+            ..., self.anchor_body_idx_motion, :
+        ]
+        self.ref_anchor_ang_vel_future_w = self.future_ref_motion.body_ang_vel_w[
+            ..., self.anchor_body_idx_motion, :
+        ]
+
         # Reward: current robot body and joint states
         self.robot_body_link_pos_w = self.asset.data.body_link_pos_w[
             :, self.tracking_body_indices_asset
@@ -370,6 +411,12 @@ class RobotTracking(Command):
         ]
         self.robot_body_com_ang_vel_w = self.asset.data.body_com_ang_vel_w[
             :, self.tracking_body_indices_asset
+        ]
+        self.robot_anchor_link_pos_w = self.asset.data.body_link_pos_w[
+            :, self.anchor_body_idx_asset
+        ]
+        self.robot_anchor_link_quat_w = self.asset.data.body_link_quat_w[
+            :, self.anchor_body_idx_asset
         ]
         self.robot_joint_pos = self.asset.data.joint_pos[
             :, self.tracking_joint_indices_asset
@@ -390,9 +437,67 @@ class RobotTracking(Command):
         self.ref_joint_vel = self.ref_joint_vel_future_[:, 0]
         self.ref_root_link_pos_w = self.ref_root_pos_future_w[:, 0]
         self.ref_root_link_quat_w = self.ref_root_quat_future_w[:, 0]
+        self.ref_anchor_link_pos_w = self.ref_anchor_pos_future_w[:, 0]
+        self.ref_anchor_link_quat_w = self.ref_anchor_quat_future_w[:, 0]
         # shape: [num_envs, num_future_steps, num_tracking_bodies, xxx]
 
         self.t += 1
+
+    def debug_draw(self):
+        if not hasattr(self, "current_ref_motion"):
+            return
+
+        visualizer: "DebugVisualizer" = getattr(self.env, "visualizer", None)
+        if visualizer is None:
+            return
+
+        env_idx = visualizer.env_idx
+        if self.viz.mode == "ghost":
+            if self._ghost_model is None:
+                self._ghost_model = copy.deepcopy(self.env.sim.mj_model)
+                self._ghost_model.geom_rgba[:] = self.viz.ghost_color
+
+            indexing = self.asset.indexing
+            free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
+            joint_q_adr = indexing.joint_q_adr.cpu().numpy()
+
+            qpos = np.zeros(self.env.sim.mj_model.nq)
+            qpos[free_joint_q_adr[0:3]] = (
+                self.ref_root_link_pos_w[env_idx].cpu().numpy()
+            )
+            qpos[free_joint_q_adr[3:7]] = (
+                self.ref_root_link_quat_w[env_idx].cpu().numpy()
+            )
+            qpos[joint_q_adr] = (
+                self.current_ref_motion.joint_pos[env_idx, self.asset_joint_idx_motion]
+                .cpu()
+                .numpy()
+            )
+
+            visualizer.add_ghost_mesh(qpos, model=self._ghost_model)
+        elif self.viz.mode == "frames":
+            desired_body_pos = self.ref_body_link_pos_w[env_idx].cpu().numpy()
+            desired_body_quat = self.ref_body_link_quat_w[env_idx]
+            desired_body_rotm = matrix_from_quat(desired_body_quat).cpu().numpy()
+
+            current_body_pos = self.robot_body_link_pos_w[env_idx].cpu().numpy()
+            current_body_quat = self.robot_body_link_quat_w[env_idx]
+            current_body_rotm = matrix_from_quat(current_body_quat).cpu().numpy()
+
+            for i, body_name in enumerate(self.tracking_keypoint_names):
+                visualizer.add_frame(
+                    position=desired_body_pos[i],
+                    rotation_matrix=desired_body_rotm[i],
+                    scale=0.08,
+                    label=f"desired_{body_name}",
+                    axis_colors=_DESIRED_FRAME_COLORS,
+                )
+                visualizer.add_frame(
+                    position=current_body_pos[i],
+                    rotation_matrix=current_body_rotm[i],
+                    scale=0.12,
+                    label=f"current_{body_name}",
+                )
 
 
 class RobotObjectTracking(RobotTracking):
@@ -777,6 +882,3 @@ class RobotObjectTracking(RobotTracking):
         self.eef_contact_forces_b[:] = quat_apply_inverse(
             object_quat_w.unsqueeze(1), self.eef_contact_forces_w
         )
-
-    def debug_draw(self):
-        return

@@ -50,7 +50,7 @@ class PPOConfig:
     desired_kl: float | None = 0.01  # None
 
     # exploration
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.004
     init_noise_scale: float = 1.0
     load_noise_scale: float | None = 0.5
 
@@ -74,7 +74,7 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store(
     "ppo_roa_train",
-    node=PPOConfig(phase="train", vecnorm="train", entropy_coef=0.001),
+    node=PPOConfig(phase="train", vecnorm="train", entropy_coef=0.004),
     group="algo",
 )
 cs.store(
@@ -84,7 +84,7 @@ cs.store(
 )
 cs.store(
     "ppo_roa_finetune",
-    node=PPOConfig(phase="finetune", vecnorm="eval", entropy_coef=0.001),
+    node=PPOConfig(phase="finetune", vecnorm="eval", entropy_coef=0.004),
     group="algo",
 )
 cs.store(
