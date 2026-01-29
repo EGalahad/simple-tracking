@@ -504,8 +504,6 @@ class _Env(EnvBase):
             .unsqueeze(1)
             .float()
         )
-        if hasattr(self.command_manager, "success"):
-            self.stats["success"][:] = self.command_manager.success.float()
         end = time.perf_counter()
         self.reward_time = self.reward_time * self._stats_ema_decay + (end - start)
         return {"reward": rewards}
@@ -513,19 +511,31 @@ class _Env(EnvBase):
     def _compute_termination(self) -> TensorDictBase:
         start = time.perf_counter()
         if not self.termination_funcs:
-            return torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
+            zeros = torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
+            return zeros, zeros
 
-        flags = []
+        terminate_flags = []
+        truncate_flags = []
         for key, func in self.termination_funcs.items():
             flag = func()
             self.stats["termination", key][:] = flag.float()
-            flags.append(flag)
-        flags = torch.cat(flags, dim=-1)
+            if getattr(func, "is_timeout", True):
+                terminate_flags.append(flag)
+            else:
+                truncate_flags.append(flag)
+
+        def _reduce(flags):
+            if not flags:
+                return torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
+            return torch.cat(flags, dim=-1).any(dim=-1, keepdim=True)
+
+        terminated = _reduce(terminate_flags)
+        truncated = _reduce(truncate_flags)
         end = time.perf_counter()
         self.termination_time = self.termination_time * self._stats_ema_decay + (
             end - start
         )
-        return flags.any(dim=-1, keepdim=True)
+        return terminated, truncated
 
     def _update(self):
         start = time.perf_counter()
@@ -584,10 +594,8 @@ class _Env(EnvBase):
         self.command_time = self.command_time * self._stats_ema_decay + (end - start)
 
         self._compute_observation(tensordict)
-        terminated = self._compute_termination()
-        truncated = (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
-        if hasattr(self.command_manager, "finished"):
-            truncated = truncated | self.command_manager.finished
+        terminated, truncated = self._compute_termination()
+        truncated |= (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)
         tensordict.set("done", terminated | truncated)

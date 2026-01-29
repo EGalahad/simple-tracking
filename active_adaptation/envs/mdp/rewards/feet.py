@@ -251,17 +251,22 @@ class feet_contact_count(Reward):
     def __init__(self, env, body_names: str, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.contact_sensor: ContactSensor = self.env.scene["feet_ground_contact"]
 
         self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
-        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
-        self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
-        self.first_contact = torch.zeros(
-            self.num_envs, len(self.body_ids), device=self.env.device
+
+        self.in_contact_last = torch.zeros(
+            self.num_envs, len(self.articulation_body_ids), dtype=bool, device=self.env.device
         )
 
+    def reset(self, env_ids):
+        self.in_contact_last.index_fill_(0, env_ids, False)
+
     def compute(self):
-        self.first_contact[:] = self.contact_sensor.compute_first_contact(
-            self.env.step_dt
-        )[:, self.body_ids]
-        return self.first_contact.sum(1, keepdim=True)
+        in_contact_this = self.contact_sensor.data.found > 0
+        first_contact = (~in_contact_this) & self.in_contact_last
+        self.in_contact_last[:] = in_contact_this
+
+        contact_count = first_contact.sum(dim=1, keepdim=True).float()
+        return contact_count
+        

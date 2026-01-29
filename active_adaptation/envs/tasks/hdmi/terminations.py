@@ -1,9 +1,8 @@
-from active_adaptation.envs.tasks.hdmi.command import RobotTracking, RobotObjectTracking
+from active_adaptation.envs.tasks.hdmi.command import RobotTracking
 from active_adaptation.envs.mdp.terminations.base import Termination as BaseTermination
 
 import torch
 from typing import List
-from omegaconf import ListConfig
 from mjlab.utils.lab_api.string import resolve_matching_names
 from mjlab.utils.lab_api.math import (
     quat_apply_inverse,
@@ -42,6 +41,18 @@ class _cum_error_mixin:
 
 
 RobotTrackTermination = BaseTermination[RobotTracking]
+
+class motion_timeout(RobotTrackTermination):
+    """
+    Terminates when the motion clip is consumed (or always true in replay mode).
+    """
+    def __init__(self, is_timeout: bool = True, **kwargs):
+        super().__init__(is_timeout=is_timeout, **kwargs)
+
+    def __call__(self):
+        if self.command_manager.replay_motion:
+            return torch.ones(self.num_envs, 1, dtype=bool, device=self.device)
+        return (self.command_manager.t >= self.command_manager.motion_len).unsqueeze(1)
 
 
 class cum_body_pos_error(_cum_error_mixin, RobotTrackTermination):
@@ -257,59 +268,4 @@ class cum_joint_pos_error(_cum_error_mixin, RobotTrackTermination):
 
         joint_pos_error = (ref_joint_pos - robot_joint_pos).abs()
         self.error[:] = joint_pos_error.max(dim=1).values
-        super().update()
-
-
-RobotObjectTrackTermination = BaseTermination[RobotObjectTracking]
-
-
-class cum_object_pos_error(_cum_error_mixin, RobotObjectTrackTermination):
-    def update(self):
-        ref_object_pos_w = self.command_manager.ref_object_pos_w
-        box_pos_w = self.command_manager.object.data.root_link_pos_w
-        box_pos_diff = ref_object_pos_w - box_pos_w
-        self.error[:] = box_pos_diff.norm(dim=-1)
-        super().update()
-
-
-class cum_object_ori_error(_cum_error_mixin, RobotObjectTrackTermination):
-    def update(self):
-        ref_object_quat_w = self.command_manager.ref_object_quat_w
-        object_quat_w = self.command_manager.object.data.root_link_quat_w
-        box_quat_diff = quat_mul(quat_conjugate(object_quat_w), ref_object_quat_w)
-        self.error[:] = axis_angle_from_quat(box_quat_diff).norm(dim=-1)
-        super().update()
-
-
-class cum_lost_contact_steps(_cum_error_mixin, RobotObjectTrackTermination):
-    def __init__(
-        self,
-        pos_thres: float = 0.05,
-        frc_thres: float = 2.0,
-        threshold: float = 1.0,
-        **kwargs,
-    ):
-        super().__init__(threshold=threshold, **kwargs)
-        self.pos_thres = pos_thres
-        self.frc_thres = frc_thres
-        if isinstance(frc_thres, ListConfig):
-            self.frc_thres = torch.tensor(frc_thres, device=self.device)
-
-    def update(self):
-        eef_pos_diff = (
-            self.command_manager.contact_eef_pos_w
-            - self.command_manager.contact_target_pos_w
-        )
-        eef_frc = self.command_manager.eef_contact_forces_b
-
-        contact_pos = eef_pos_diff.norm(dim=-1) < self.pos_thres
-        if isinstance(self.frc_thres, float):
-            contact_frc = eef_frc.norm(dim=-1) >= self.frc_thres
-        else:
-            contact_frc = (eef_frc.abs() >= self.frc_thres).all(dim=-1)
-
-        in_contact = contact_pos & contact_frc
-        in_range = self.command_manager.ref_object_contact
-        lost_contact = (in_range & (~in_contact)).any(dim=-1)
-        self.error[:] = 2 * lost_contact.float()
         super().update()

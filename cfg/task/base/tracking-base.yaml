@@ -172,6 +172,8 @@ reward:
     body_pos_error_local(keypoint_pos_error_local): {body_names: [".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"], weight: 1.0, enabled: false}
     body_ori_error_local(keypoint_ori_error_local): {body_names: [".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"], weight: 1.0, enabled: false}
     joint_pos_error:             {joint_names: ["waist_.*_joint", ".*_hip_.*_joint", ".*_knee_joint", ".*_shoulder_.*_joint", ".*_elbow_joint"], weight: 1.0, enabled: false}
+  debug_loco:
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}
 
 # Common Randomization section
 randomization:
@@ -179,23 +181,26 @@ randomization:
     .*: [0.9, 1.1]
   perturb_body_materials:
     body_names: [".*ankle_roll_link", ".*_wrist_yaw_link"]
-    static_friction_range: [0.3, 1.6]
-    dynamic_friction_range: [0.3, 1.2]
-    restitution_range: [0.0, 0.2]
+    friction_range: [0.5, 1.5]
   perturb_body_com:
     body_names: ["pelvis", "torso_link"]
     com_range: [-0.02, 0.02]
   random_joint_offset:
     .*: [-0.01, 0.01]
-  impulse:
-    body_names: "torso_link"
-    impulse_scale: [10, 10, 2]
-    duration_range: [0.2, 1.0]
+  # impulse:
+  #   body_names: "torso_link"
+  #   impulse_scale: [10, 10, 2]
+  #   duration_range: [0.2, 1.0]
 
 # Common Termination section
 termination:
-  cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
-  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
+  motion_timeout:           {is_timeout: true}
+
+  # cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8, is_timeout: true}
+  # cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6, is_timeout: true}
+
+  # cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
+  # cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
 
   cum_body_pos_error_local: {body_names: ".*",  min_steps: 25, threshold: 0.8}
   cum_body_ori_error_local: {body_names: ".*",  min_steps: 25, threshold: 1.6}

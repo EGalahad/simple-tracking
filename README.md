@@ -33,6 +33,22 @@ Setup virtual environment with `uv sync` and apply mjlab patch (venv files)
 patch --forward -p0 < patches/mjlab_local.patch
 ```
 
+For mujoco stubs
+```bash
+uv pip install mypy
+uv run stubgen -m mujoco -o ./stubs
+uv run stubgen -p mujoco -o ./stubs
+```
+Then add the `./stubs` to VSCode settings.
+```json
+// .vscode/settings.json
+{
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/stubs",
+  ]
+}
+```
+
 ### Prepare Data
 
 AMASS data: refer to https://github.com/Axellwppr/gentle-humanoid-training. use `scripts/data_process/generate_amass_dataset.py` to convert to HDMI format.

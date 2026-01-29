@@ -11,12 +11,13 @@ CT = TypeVar("CT", bound="Command")
 
 
 class Termination(Generic[CT], RegistryMixin):
-    def __init__(self, env, **kwargs):
+    def __init__(self, env, is_timeout=True, **kwargs):
         if kwargs:
             print("Warning: Unused kwargs in Termination:", kwargs)
             breakpoint()
         super().__init__(**kwargs)
         self.env: _Env = env
+        self.is_timeout = is_timeout
         self.command_manager: CT = env.command_manager
 
     def update(self):

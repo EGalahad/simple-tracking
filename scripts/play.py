@@ -130,49 +130,6 @@ def main(cfg):
                 command_obs[obs_key]["body_names"] = tracking_keypoint_names
                 command_obs[obs_key]["joint_names"] = tracking_joint_names
                 command_obs[obs_key]["root_body_name"] = root_body_name
-        elif (
-            cfg.task.command._target_
-            == "active_adaptation.envs.tasks.hdmi.command.RobotObjectTracking"
-        ):
-            from active_adaptation.envs.tasks.hdmi.command import RobotObjectTracking
-
-            assert isinstance(command, RobotObjectTracking)
-            assert command.dataset.num_motions == 1
-
-            tracking_keypoint_names = command.tracking_keypoint_names
-            tracking_joint_names = command.tracking_joint_names
-            motion_duration_second = command.dataset.lengths[0].item() * env.step_dt
-            future_steps = command.future_steps.tolist()
-            tracking_keypoint_names = command.tracking_keypoint_names
-            tracking_joint_names = command.tracking_joint_names
-            root_body_name = command.root_body_name
-
-            # for motion observation
-            for obs_key in command_obs:
-                command_obs[obs_key]["motion_duration_second"] = motion_duration_second
-                command_obs[obs_key]["motion_path"] = cfg.task.command.data_path
-                command_obs[obs_key]["future_steps"] = future_steps
-                command_obs[obs_key]["body_names"] = tracking_keypoint_names
-                command_obs[obs_key]["joint_names"] = tracking_joint_names
-                command_obs[obs_key]["root_body_name"] = root_body_name
-
-            object_asset_name = cfg.task.command.object_asset_name
-            object_body_name = cfg.task.command.object_body_name
-            contact_target_pos_offset = np.array(
-                cfg.task.command.contact_target_pos_offset
-            ).tolist()
-            # for object observation in object obs
-            object_obs = policy_config["observation"].get("object", None)
-            if object_obs is not None:
-                for obs_key in object_obs:
-                    if obs_key == "ref_contact_pos_b":
-                        object_obs[obs_key]["object_name"] = object_body_name
-                        object_obs[obs_key][
-                            "contact_target_pos_offset"
-                        ] = contact_target_pos_offset
-                    else:
-                        object_obs[obs_key]["object_name"] = object_asset_name
-                    object_obs[obs_key]["root_body_name"] = root_body_name
 
         import yaml
 

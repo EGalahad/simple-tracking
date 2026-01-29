@@ -27,9 +27,7 @@ class perturb_body_materials(Randomization):
         self,
         env,
         body_names,
-        static_friction_range=(0.6, 1.0),
-        dynamic_friction_range=(0.6, 1.0),
-        restitution_range=(0.0, 0.2),
+        friction_range: RangeType = (0.5, 1.5),
         homogeneous: bool = False,
     ):
         super().__init__(env)
@@ -41,9 +39,7 @@ class perturb_body_materials(Randomization):
             )
 
         self.homogeneous = homogeneous
-        self.static_friction_range = tuple(static_friction_range)
-        self.dynamic_friction_range = tuple(dynamic_friction_range)
-        self.restitution_range = tuple(restitution_range)
+        self.friction_range = tuple(friction_range)
 
         # Determine geoms that belong to the selected bodies.
         local_body_ids = torch.as_tensor(
@@ -83,11 +79,9 @@ class perturb_body_materials(Randomization):
         )
 
         model = self.env.sim.model
-        self._default_friction = model.geom_friction[:, self.geom_global_ids].clone()
-        if hasattr(model, "geom_solref"):
-            self._default_solref = model.geom_solref[:, self.geom_global_ids].clone()
-        else:
-            self._default_solref = None
+        self._default_geom_friction = model.geom_friction[
+            :, self.geom_global_ids
+        ].clone()
 
     def _sample_range(
         self, range_tuple: Tuple[float, float], shape: tuple[int, int]
@@ -104,52 +98,20 @@ class perturb_body_materials(Randomization):
         sample_cols = 1 if self.homogeneous else num_geoms
         sample_shape = (self.num_envs, sample_cols)
 
-        static_frictions = self._sample_range(self.static_friction_range, sample_shape)
-        dynamic_frictions = self._sample_range(
-            self.dynamic_friction_range, sample_shape
-        )
+        frictions = self._sample_range(self.friction_range, sample_shape)
         if sample_cols == 1:
-            static_frictions = static_frictions.expand(-1, num_geoms)
-            dynamic_frictions = dynamic_frictions.expand(-1, num_geoms)
+            frictions = frictions.expand(-1, num_geoms)
 
         model = self.env.sim.model
-        geom_friction = model.geom_friction
-        geom_friction[:, self.geom_global_ids, 0] = dynamic_frictions
-        # TODO: mujoco do not differentiate static and dynamic friction?
-        # if geom_friction.shape[-1] > 1:
-        #     geom_friction[:, self.geom_global_ids, 1] = dynamic_frictions
-        # if geom_friction.shape[-1] > 2:
-        #     geom_friction[:, self.geom_global_ids, 2] = dynamic_frictions
-
-        # TODO: this is not restitution
-        # if self._default_solref is not None:
-        #     rest_vals = self._sample_range(self.restitution_range, sample_shape)
-        #     if sample_cols == 1:
-        #         rest_vals = rest_vals.expand(-1, num_geoms)
-        #     geom_solref = model.geom_solref
-        #     solref = self._default_solref.clone()
-        #     # Map restitution to the second solref parameter (damping ratio-like term).
-        #     solref[..., 1] = rest_vals
-        #     geom_solref[:, self.geom_global_ids] = solref
+        geom_friction = self._default_geom_friction.clone()
+        geom_friction[..., 0] = frictions
+        model.geom_friction[:, self.geom_global_ids] = geom_friction
 
         # Sync CPU model for viewer consistency using env 0 parameters.
         cpu_model = self.env.sim.mj_model
-        cpu_model.geom_friction[self._geom_global_ids_cpu.numpy(), 0] = (
-            geom_friction[0, self.geom_global_ids, 0].to(device="cpu").numpy()
+        cpu_model.geom_friction[self._geom_global_ids_cpu.numpy()] = (
+            model.geom_friction[0, self.geom_global_ids].to(device="cpu").numpy()
         )
-        if geom_friction.shape[-1] > 1:
-            cpu_model.geom_friction[self._geom_global_ids_cpu.numpy(), 1] = (
-                geom_friction[0, self.geom_global_ids, 1].to(device="cpu").numpy()
-            )
-        if geom_friction.shape[-1] > 2:
-            cpu_model.geom_friction[self._geom_global_ids_cpu.numpy(), 2] = (
-                geom_friction[0, self.geom_global_ids, 2].to(device="cpu").numpy()
-            )
-
-        if self._default_solref is not None:
-            cpu_model.geom_solref[self._geom_global_ids_cpu.numpy()] = (
-                model.geom_solref[0, self.geom_global_ids].to(device="cpu").numpy()
-            )
 
 
 class perturb_body_mass(Randomization):
