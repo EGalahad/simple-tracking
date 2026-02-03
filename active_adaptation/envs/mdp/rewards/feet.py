@@ -256,7 +256,10 @@ class feet_contact_count(Reward):
         self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
 
         self.in_contact_last = torch.zeros(
-            self.num_envs, len(self.articulation_body_ids), dtype=bool, device=self.env.device
+            self.num_envs,
+            len(self.articulation_body_ids),
+            dtype=bool,
+            device=self.env.device,
         )
 
     def reset(self, env_ids):
@@ -269,4 +272,3 @@ class feet_contact_count(Reward):
 
         contact_count = first_contact.sum(dim=1, keepdim=True).float()
         return contact_count
-        

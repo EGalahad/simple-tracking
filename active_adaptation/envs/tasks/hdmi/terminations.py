@@ -42,10 +42,12 @@ class _cum_error_mixin:
 
 RobotTrackTermination = BaseTermination[RobotTracking]
 
+
 class motion_timeout(RobotTrackTermination):
     """
     Terminates when the motion clip is consumed (or always true in replay mode).
     """
+
     def __init__(self, is_timeout: bool = True, **kwargs):
         super().__init__(is_timeout=is_timeout, **kwargs)
 

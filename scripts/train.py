@@ -16,6 +16,7 @@ from setproctitle import setproctitle
 
 import active_adaptation as aa
 import mjlab
+import torch.distributed as dist
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictModuleBase
@@ -42,33 +43,35 @@ def main(cfg: DictConfig):
         f"is_distributed: {aa.is_distributed()}, local_rank: {aa.get_local_rank()}/{aa.get_world_size()}"
     )
 
-    run = wandb.init(
-        job_type=cfg.wandb.job_type,
-        project=cfg.wandb.project,
-        mode=cfg.wandb.mode,
-        tags=cfg.wandb.tags,
+    dist.init_process_group(
+        backend="nccl",
+        init_method="env://",
+        timeout=datetime.timedelta(seconds=300),
     )
-    run.config.update(OmegaConf.to_container(cfg))
 
-    default_run_name = (
-        f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')}"
-    )
-    run_idx = run.name.split("-")[-1]
-    run.name = f"{run_idx}-{default_run_name}"
-    setproctitle(run.name)
+    if aa.is_main_process():
+        run = wandb.init(
+            job_type=cfg.wandb.job_type,
+            project=cfg.wandb.project,
+            mode=cfg.wandb.mode,
+            tags=cfg.wandb.tags,
+        )
+        run.config.update(OmegaConf.to_container(cfg))
 
-    cfg_save_path = os.path.join(run.dir, "cfg.yaml")
-    os.makedirs(run.dir, exist_ok=True)
-    OmegaConf.save(cfg, cfg_save_path)
-    run.save(cfg_save_path, policy="now")
-    run.save(os.path.join(run.dir, "config.yaml"), policy="now")
+        default_run_name = (
+            f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+        )
+        run_idx = run.name.split("-")[-1]
+        run.name = f"{run_idx}-{default_run_name}"
+        setproctitle(run.name)
+
+        cfg_save_path = os.path.join(run.dir, "cfg.yaml")
+        os.makedirs(run.dir, exist_ok=True)
+        OmegaConf.save(cfg, cfg_save_path)
+        run.save(cfg_save_path, policy="now")
+        run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
     env, policy, vecnorm = make_env_policy(cfg)
-
-    source_path = inspect.getfile(policy.__class__)
-    target_path = os.path.join(run.dir, source_path.split("/")[-1])
-    shutil.copy(source_path, target_path)
-    wandb.save(target_path, policy="now")
 
     total_iters = cfg.get("total_iters", -1)
     save_interval = cfg.get("save_interval", -1)
@@ -83,24 +86,30 @@ def main(cfg: DictConfig):
     ]
     episode_stats = EpisodeStats(stats_keys, device=env.device)
 
-    def save(policy, checkpoint_name: str, artifact: bool = False):
-        ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
-        state_dict = OrderedDict()
-        state_dict["wandb"] = {"name": run.name, "id": run.id}
-        state_dict["policy"] = policy.state_dict()
-        state_dict["env"] = env.state_dict()
-        state_dict["cfg"] = cfg
-        if "vecnorm" in locals():
-            state_dict["vecnorm"] = vecnorm.state_dict()
-        torch.save(state_dict, ckpt_path)
-        if artifact:
-            artifact = wandb.Artifact(
-                f"{type(env).__name__}-{type(policy).__name__}", type="model"
-            )
-            artifact.add_file(ckpt_path)
-            run.log_artifact(artifact)
-        run.save(ckpt_path, policy="now", base_path=run.dir)
-        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
+    if aa.is_main_process():
+
+        def save(policy, checkpoint_name: str, artifact: bool = False):
+            ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+            state_dict = OrderedDict()
+            state_dict["wandb"] = {"name": run.name, "id": run.id}
+            state_dict["policy"] = policy.state_dict()
+            state_dict["env"] = env.state_dict()
+            state_dict["cfg"] = cfg
+            if "vecnorm" in locals():
+                state_dict["vecnorm"] = vecnorm.state_dict()
+            torch.save(state_dict, ckpt_path)
+            if artifact:
+                artifact = wandb.Artifact(
+                    f"{type(env).__name__}-{type(policy).__name__}", type="model"
+                )
+                artifact.add_file(ckpt_path)
+                run.log_artifact(artifact)
+            run.save(ckpt_path, policy="now", base_path=run.dir)
+            logging.info(f"Saved checkpoint to {str(ckpt_path)}")
+    else:
+
+        def save(*args, **kwargs):
+            return
 
     assert env.training
 
@@ -113,19 +122,20 @@ def main(cfg: DictConfig):
     carry = env.reset()
     rollout_policy: TensorDictModuleBase = policy.get_rollout_policy("train")
 
+    next_saved_keys = [
+        "done",
+        "terminated",
+        "discount",
+        "reward",
+        "stats",
+        "is_init",
+        "adapt_hx",
+    ]
+
     with torch.inference_mode():
         tmp_carry = rollout_policy(carry.clone(False))
         tmp_td, _ = env.step_and_maybe_reset(tmp_carry.clone(False))
-        tmp_td["next"] = tmp_td["next"].select(
-            "done",
-            "terminated",
-            "discount",
-            "reward",
-            "stats",
-            "is_init",
-            "adapt_hx",
-            strict=False,
-        )
+        tmp_td["next"] = tmp_td["next"].select(*next_saved_keys, strict=False)
 
     N = env.num_envs
     T = cfg.algo.train_every
@@ -146,6 +156,18 @@ def main(cfg: DictConfig):
     env_frames = 0
     start_iter = env.current_iter
     for i in progress:
+        # sync VecNorm running stats across ranks
+        if (
+            aa.is_distributed()
+            and vecnorm is not None
+            and getattr(vecnorm, "_td", None) is not None
+        ):
+            with torch.no_grad():
+                for _, v in vecnorm._td.items():
+                    if torch.is_tensor(v):
+                        # dist.all_reduce(v, op=dist.ReduceOp.AVG)
+                        dist.broadcast(v, src=0)
+
         rollout_start = time.perf_counter()
         with torch.inference_mode(), set_exploration_type(ExplorationType.RANDOM):
             torch.compiler.cudagraph_mark_step_begin()  # for compiled policy
@@ -153,16 +175,7 @@ def main(cfg: DictConfig):
             for step in range(cfg.algo.train_every):
                 carry = rollout_policy(carry)
                 td, carry = env.step_and_maybe_reset(carry)
-                td["next"] = td["next"].select(
-                    "done",
-                    "terminated",
-                    "discount",
-                    "reward",
-                    "stats",
-                    "is_init",
-                    "adapt_hx",
-                    strict=False,
-                )
+                td["next"] = td["next"].select(*next_saved_keys, strict=False)
                 data_buf[:, step] = td
             policy.critic(data_buf)
             values = data_buf["state_value"]
@@ -196,37 +209,30 @@ def main(cfg: DictConfig):
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
 
-        info["env_frames"] = env_frames
-        info["rollout_fps"] = data_buf.numel() / rollout_time
+        info["env_frames"] = env_frames * aa.get_world_size()
+        info["rollout_fps"] = data_buf.numel() / rollout_time * aa.get_world_size()
         info["training_time"] = training_time
 
         if should_save(i):
             save(policy, f"checkpoint_{i}")
 
         if aa.is_main_process():
-            # print(OmegaConf.to_yaml({k: v for k, v in info.items() if (isinstance(v, (float, int)) and not k.startswith("performance_reward"))}))
-            run.log(info)
+            run.log(info, step=i)
 
     # 5. --- Finalization and Cleanup ---
+    save(policy, "checkpoint_final", artifact=True)
+
     if aa.is_main_process():
-        save(policy, "checkpoint_final", artifact=True)
-
-    policy_eval = policy.get_rollout_policy("eval")
-    info, trajs, stats, policy_trajs = evaluate(
-        env, policy_eval, render=cfg.eval_render, seed=cfg.seed
-    )
-    run.log(info)
-
-    wandb.finish()
+        wandb.finish()
     os._exit(0)
     env.close()
 
-    run_id = run.id
-    project = run.project
-    entity = run.entity
-    run_path = f"{entity}/{project}/{run_id}"
-
-    return run_path
+    if aa.is_main_process():
+        run_id = run.id
+        project = run.project
+        entity = run.entity
+        run_path = f"{entity}/{project}/{run_id}"
+        return run_path
 
 
 if __name__ == "__main__":

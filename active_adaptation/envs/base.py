@@ -2,6 +2,7 @@ import torch
 import mujoco
 import hydra
 import re
+from dataclasses import replace
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -665,6 +666,104 @@ class SimpleEnv(_Env):
         self.action_buf: torch.Tensor = self.action_manager.action_buf
         self.last_action: torch.Tensor = self.action_manager.applied_action
 
+    def _build_terrain_cfg(self, terrain_name: str, env_spacing: float):
+        """Construct a TerrainImporterCfg based on the task's terrain name."""
+
+        from mjlab.terrains.terrain_importer import TerrainImporterCfg
+        from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
+        import mjlab.terrains as terrain_gen
+        from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+
+        name = (terrain_name or "plane").lower()
+
+        if name == "plane":
+            return TerrainImporterCfg(
+                terrain_type="plane",
+                env_spacing=env_spacing,
+                num_envs=self.cfg.num_envs,
+            )
+
+        if name in {"rough", "rough_mix"}:
+            tg_cfg = replace(ROUGH_TERRAINS_CFG)
+            return TerrainImporterCfg(
+                terrain_type="generator",
+                terrain_generator=tg_cfg,
+                env_spacing=env_spacing,
+                num_envs=self.cfg.num_envs,
+            )
+
+        def _single_subterrain_cfg(sub_cfg):
+            return TerrainGeneratorCfg(
+                size=(8.0, 8.0),
+                border_width=1.0,
+                num_rows=4,
+                num_cols=4,
+                sub_terrains={"terrain": sub_cfg},
+                add_lights=True,
+            )
+
+        if name == "pyramid_stairs":
+            sub = terrain_gen.BoxPyramidStairsTerrainCfg(
+                proportion=1.0,
+                step_height_range=(0.0, 0.12),
+                step_width=0.35,
+                platform_width=2.0,
+                border_width=0.5,
+            )
+            tg_cfg = _single_subterrain_cfg(sub)
+        elif name == "pyramid_stairs_inv":
+            sub = terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+                proportion=1.0,
+                step_height_range=(0.0, 0.12),
+                step_width=0.35,
+                platform_width=2.0,
+                border_width=0.5,
+            )
+            tg_cfg = _single_subterrain_cfg(sub)
+        elif name == "random_grid":
+            sub = terrain_gen.BoxRandomGridTerrainCfg(
+                proportion=1.0,
+                grid_width=0.5,
+                grid_height_range=(0.0, 0.20),
+                platform_width=1.2,
+                holes=False,
+                merge_similar_heights=True,
+                height_merge_threshold=0.05,
+                max_merge_distance=3,
+            )
+            tg_cfg = _single_subterrain_cfg(sub)
+        elif name == "wave":
+            sub = terrain_gen.HfWaveTerrainCfg(
+                proportion=1.0,
+                amplitude_range=(0.05, 0.15),
+                num_waves=4,
+                horizontal_scale=0.12,
+                vertical_scale=0.006,
+                base_thickness_ratio=0.3,
+                border_width=0.4,
+            )
+            tg_cfg = _single_subterrain_cfg(sub)
+        elif name == "random_rough":
+            sub = terrain_gen.HfRandomUniformTerrainCfg(
+                proportion=1.0,
+                noise_range=(-0.03, 0.03),
+                noise_step=0.01,
+                horizontal_scale=0.3,
+                vertical_scale=0.007,
+                base_thickness_ratio=0.6,
+                border_width=0.3,
+            )
+            tg_cfg = _single_subterrain_cfg(sub)
+        else:
+            raise ValueError(f"Unknown terrain type: {terrain_name}")
+
+        return TerrainImporterCfg(
+            terrain_type="generator",
+            terrain_generator=tg_cfg,
+            env_spacing=env_spacing,
+            num_envs=self.cfg.num_envs,
+        )
+
     def setup_scene(self):
         if active_adaptation.get_backend() != "mjlab":
             raise NotImplementedError("Only the mjlab backend is supported.")
@@ -674,12 +773,9 @@ class SimpleEnv(_Env):
             env_spacing = self.cfg.viewer.get("env_spacing", 2.0)
             scene_cfg = MJSceneCfg(num_envs=self.cfg.num_envs, env_spacing=env_spacing)
 
-            from mjlab.terrains.terrain_importer import TerrainImporterCfg
-
-            terrain_cfg = TerrainImporterCfg(
-                terrain_type="plane",
+            terrain_cfg = self._build_terrain_cfg(
+                terrain_name=getattr(self.cfg, "terrain", "plane"),
                 env_spacing=env_spacing,
-                num_envs=self.cfg.num_envs,
             )
             scene_cfg.terrain = terrain_cfg
 
@@ -708,12 +804,13 @@ class SimpleEnv(_Env):
             from mjlab.sim import MujocoCfg, SimulationCfg
 
             self.sim_cfg = sim_cfg = SimulationCfg(
-                nconmax=50,
+                nconmax=200,
                 njmax=500,
                 mujoco=MujocoCfg(
                     timestep=self.cfg.sim.mjlab_physics_dt,
                     iterations=10,
                     ls_iterations=20,
+                    ccd_iterations=100,
                 ),
             )
 

@@ -1,4 +1,7 @@
-from active_adaptation.envs.tasks.hdmi.command import RobotTracking
+from active_adaptation.envs.tasks.hdmi.command import (
+    RobotTracking,
+    _DESIRED_FRAME_COLORS,
+)
 from active_adaptation.envs.mdp.rewards.base import Reward as BaseReward
 from active_adaptation.utils.math import batchify
 
@@ -10,19 +13,81 @@ from mjlab.utils.lab_api.string import (
 )
 from mjlab.utils.lab_api.math import (
     quat_apply_inverse,
+    quat_apply,
     quat_mul,
     quat_conjugate,
     axis_angle_from_quat,
     yaw_quat,
+    matrix_from_quat,
 )
+
 quat_apply_inverse = batchify(quat_apply_inverse)
+quat_apply = batchify(quat_apply)
+quat_mul = batchify(quat_mul)
 
 import torch
 
 if TYPE_CHECKING:
     from mjlab.sensor import ContactSensor
+    from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 TrackReward = BaseReward[RobotTracking]
+
+
+def align_pos_between_roots(
+    src_points: torch.Tensor,
+    src_root_pos: torch.Tensor,
+    src_root_quat: torch.Tensor,
+    dst_root_pos: torch.Tensor,
+    dst_root_quat: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Transform points expressed in the source root frame into the destination root frame,
+    then return them in world coordinates.
+    Shapes (required):
+        src_points: [N, K, 3]
+        src_root_pos / dst_root_pos: [N, 3]
+        src_root_quat / dst_root_quat: [N, 4]
+    """
+    assert src_points.dim() == 3, "align_pos_between_roots expects src_points ndim=3"
+
+    delta_quat = quat_mul(dst_root_quat, quat_conjugate(src_root_quat))  # [N,4]
+    delta_quat = delta_quat.unsqueeze(1).expand(-1, src_points.shape[1], -1)
+
+    aligned = dst_root_pos.unsqueeze(1) + quat_apply(
+        delta_quat, src_points - src_root_pos.unsqueeze(1)
+    )
+
+    # delta_quat = quat_mul(quat_conjugate(dst_root_quat), src_root_quat)  # [N,4]
+    # delta_quat = delta_quat.unsqueeze(1).expand(-1, src_points.shape[1], -1)
+    # aligned = dst_root_pos.unsqueeze(1) + quat_apply_inverse(
+    #     delta_quat, src_points - src_root_pos.unsqueeze(1)
+    # )
+
+    return aligned
+
+
+def align_quat_between_roots(
+    src_quat: torch.Tensor,
+    src_root_quat: torch.Tensor,
+    dst_root_quat: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Transform orientations expressed in the source root frame into the destination root frame.
+    Shapes (required):
+        src_quat: [N, K, 4]
+        src_root_quat / dst_root_quat: [N, 4]
+    """
+    assert src_quat.dim() == 3, "align_quats_between_roots expects src_quat ndim=3"
+
+    src_root = src_root_quat.unsqueeze(1).expand(-1, src_quat.shape[1], -1)
+    dst_root = dst_root_quat.unsqueeze(1).expand(-1, src_quat.shape[1], -1)
+
+    aligned = quat_mul(
+        dst_root,
+        quat_mul(quat_conjugate(src_root), src_quat),
+    )
+    return aligned
 
 
 class _tracking_keypoint(TrackReward):
@@ -411,19 +476,20 @@ class keypoint_lin_vel_tracking_local_product(_tracking_keypoint):
 
         body_lin_vel_asset_local = quat_apply_inverse(
             self.command_manager.robot_anchor_link_quat_w.unsqueeze(1),
-            body_lin_vel_asset
+            body_lin_vel_asset,
         )
         body_lin_vel_motion_local = quat_apply_inverse(
             self.command_manager.ref_anchor_link_quat_w.unsqueeze(1),
-            body_lin_vel_motion
+            body_lin_vel_motion,
         )
-        
+
         diff = body_lin_vel_motion_local - body_lin_vel_asset_local
         # shape: [num_envs, num_tracking_bodies, 3]
         error = (diff.norm(dim=-1) - self.tolerance).clamp_min(0.0)
         # shape: [num_envs, num_tracking_bodies]
         return torch.exp(-error.mean(dim=1) / self.sigma).unsqueeze(1)
-    
+
+
 class keypoint_ang_vel_tracking_local_product(_tracking_keypoint):
     def compute(self):
         body_ang_vel_asset = self.command_manager.asset.data.body_com_ang_vel_w[
@@ -435,13 +501,13 @@ class keypoint_ang_vel_tracking_local_product(_tracking_keypoint):
 
         body_ang_vel_asset_local = quat_apply_inverse(
             self.command_manager.robot_anchor_link_quat_w.unsqueeze(1),
-            body_ang_vel_asset
+            body_ang_vel_asset,
         )
         body_ang_vel_motion_local = quat_apply_inverse(
             self.command_manager.ref_anchor_link_quat_w.unsqueeze(1),
-            body_ang_vel_motion
+            body_ang_vel_motion,
         )
-        
+
         diff = body_ang_vel_motion_local - body_ang_vel_asset_local
         # shape: [num_envs, num_tracking_bodies, 3]
         error = (diff.norm(dim=-1) - self.tolerance).clamp_min(0.0)
@@ -473,9 +539,9 @@ class _tracking_joint(TrackReward):
         assert (
             set(matched_names) == set(matched_names_motion) == set(matched_names_asset)
         ), "joint names in motion dataset and robot not matched"
-        assert set(matched_names) <= set(
-            self.command_manager.tracking_joint_names
-        ), "Some joint names in motion dataset not found in tracking joint names"
+        assert set(matched_names) <= set(self.command_manager.tracking_joint_names), (
+            "Some joint names in motion dataset not found in tracking joint names"
+        )
 
         self.joint_indices_motion = []
         self.joint_indices_asset = []
@@ -599,15 +665,11 @@ class feet_air_time_ref(TrackReward):
         ref_vel = self.command_manager.ref_body_com_lin_vel_w[
             :, self.body_indices_motion
         ]
-        ref_pos = self.command_manager.ref_body_link_pos_w[
-            :, self.body_indices_motion
-        ]
+        ref_pos = self.command_manager.ref_body_link_pos_w[:, self.body_indices_motion]
         ref_feet_standing = (ref_vel.norm(dim=-1) < 0.2) & (ref_pos[..., 2] < 0.15)
 
         # height-based scaling using current robot foot height
-        feet_height = self.asset.data.body_link_pos_w[
-            :, self.body_indices_asset, 2
-        ]
+        feet_height = self.asset.data.body_link_pos_w[:, self.body_indices_asset, 2]
         t = (feet_height - self.h_low) / (self.h_high - self.h_low)
         t = torch.clamp(t, 0.0, 1.0)
         feet_height_coef = self.c_low * torch.exp(self.exp_log_c_ratio * t)
@@ -633,8 +695,9 @@ class feet_air_time_ref(TrackReward):
 # --------------------------------------------------------------------------- #
 class keypoint_pos_tracking_aligned(TrackReward):
     """
-    使用参考动作的 root 与当前机器人 root 的 xy + yaw 对齐，并维护一个 look-ahead 缓冲，
-    逐步将对齐后的未来 root 放入缓冲；当前步用缓冲第 0 项作为目标。
+    Align the reference motion root with the current robot root in xy + yaw and
+    maintain a look-ahead buffer. Aligned future roots are pushed into the buffer,
+    and the current step uses entry 0 in the buffer as the target.
     """
 
     def __init__(
@@ -666,9 +729,13 @@ class keypoint_pos_tracking_aligned(TrackReward):
         self.body_indices_asset = [
             self.command_manager.asset.body_names.index(n) for n in matched_names
         ]
+        self.body_names = matched_names
+        self.num_bodies = len(self.body_indices_asset)
 
         # buffers
-        self.look_ahead_idx = torch.tensor([self.look_ahead - 1], device=self.device, dtype=torch.long)
+        self.look_ahead_idx = torch.tensor(
+            [self.look_ahead - 1], device=self.device, dtype=torch.long
+        )
         self.look_ahead_indices = torch.arange(self.look_ahead, device=self.device)
         self.root_pos_buf = torch.zeros(
             self.num_envs, self.look_ahead, 3, device=self.device
@@ -680,24 +747,29 @@ class keypoint_pos_tracking_aligned(TrackReward):
     # --- lifecycle hooks --- #
     def reset(self, env_ids):
         future_ref_motion = self.command_manager.dataset.get_slice(
-            self.command_manager.motion_ids[env_ids], self.command_manager.t[env_ids], steps=self.look_ahead_indices
+            self.command_manager.motion_ids[env_ids],
+            self.command_manager.t[env_ids],
+            steps=self.look_ahead_indices,
         )
-        ref_pos = future_ref_motion.body_pos_w[:, :, self.command_manager.root_body_idx_motion] \
-            + self.command_manager.env.scene.env_origins.unsqueeze(1)
-        ref_quat = future_ref_motion.body_quat_w[:, :, self.command_manager.root_body_idx_motion]
+        ref_pos = future_ref_motion.body_pos_w[
+            :, :, self.command_manager.root_body_idx_motion
+        ] + self.command_manager.env.scene.env_origins[env_ids].unsqueeze(1)
+        ref_quat = future_ref_motion.body_quat_w[
+            :, :, self.command_manager.root_body_idx_motion
+        ]
         self.root_pos_buf[env_ids] = ref_pos
         self.root_quat_buf[env_ids] = ref_quat
 
     def update(self):
-        # 左移缓冲
+        # Shift buffer left
         self.root_pos_buf[:, :-1] = self.root_pos_buf[:, 1:].clone()
         self.root_quat_buf[:, :-1] = self.root_quat_buf[:, 1:].clone()
 
-        # 对齐当前参考到机器人 (xy + yaw)，并生成新的 look-ahead 帧放末尾
-        ref_pos_t = self.command_manager.ref_root_link_pos_w.clone()          # [N,3]
-        ref_quat_t = self.command_manager.ref_root_link_quat_w        # [N,4]
-        robot_pos_t = self.command_manager.robot_root_link_pos_w.clone()        # [N,3]
-        robot_quat_t = self.command_manager.robot_root_link_quat_w      # [N,4]
+        # Align current reference to robot (xy + yaw) and append new look-ahead frame
+        ref_pos_t = self.command_manager.ref_root_link_pos_w.clone()  # [N,3]
+        ref_quat_t = self.command_manager.ref_root_link_quat_w  # [N,4]
+        robot_pos_t = self.command_manager.robot_root_link_pos_w.clone()  # [N,3]
+        robot_quat_t = self.command_manager.robot_root_link_quat_w  # [N,4]
 
         ref_pos_t[:, 2] = 0.0
         robot_pos_t[:, 2] = 0.0
@@ -705,54 +777,113 @@ class keypoint_pos_tracking_aligned(TrackReward):
         robot_quat_t = yaw_quat(robot_quat_t)
 
         look_ahead_motion = self.command_manager.dataset.get_slice(
-            self.command_manager.motion_ids, self.command_manager.t, steps=self.look_ahead_idx
+            self.command_manager.motion_ids,
+            self.command_manager.t,
+            steps=self.look_ahead_idx,
         )
-        ref_pos_look_ahead = look_ahead_motion.body_pos_w[:, 0, self.command_manager.root_body_idx_motion] \
+        ref_pos_look_ahead = (
+            look_ahead_motion.body_pos_w[
+                :, 0, self.command_manager.root_body_idx_motion
+            ]
             + self.command_manager.env.scene.env_origins
-        ref_quat_look_ahead = look_ahead_motion.body_quat_w[:, 0, self.command_manager.root_body_idx_motion]
+        )
+        ref_quat_look_ahead = look_ahead_motion.body_quat_w[
+            :, 0, self.command_manager.root_body_idx_motion
+        ]
 
-        aligned_root_pos_w = robot_pos_t + quat_apply_inverse(
-            quat_mul(quat_conjugate(robot_quat_t), ref_quat_t),
-            ref_pos_look_ahead - ref_pos_t,
-        )
-        aligned_root_quat_w = quat_mul(robot_quat_t,
-            quat_mul(quat_conjugate(ref_quat_t), ref_quat_look_ahead)
-        )
-        
+        aligned_root_pos_w = align_pos_between_roots(
+            ref_pos_look_ahead.unsqueeze(1),
+            ref_pos_t,
+            ref_quat_t,
+            robot_pos_t,
+            robot_quat_t,
+        ).squeeze(1)
+        aligned_root_quat_w = align_quat_between_roots(
+            ref_quat_look_ahead.unsqueeze(1), ref_quat_t, robot_quat_t
+        ).squeeze(1)
+
         self.root_pos_buf[:, -1] = aligned_root_pos_w
         self.root_quat_buf[:, -1] = aligned_root_quat_w
 
     # --- reward --- #
     def compute(self):
-        # 本步目标 root
+        # Target root for this step
         target_root_pos = self.root_pos_buf[:, 0]
         target_root_quat = self.root_quat_buf[:, 0]
 
-        # 参考身体位置（当前帧）
-        ref_body_pos = self.command_manager.ref_body_link_pos_w[:, self.body_indices_motion]
+        # Reference body positions (current frame)
+        ref_body_pos = self.command_manager.ref_body_link_pos_w[
+            :, self.body_indices_motion
+        ]
         ref_root_pos = self.command_manager.ref_root_link_pos_w
         ref_root_quat = self.command_manager.ref_root_link_quat_w
 
-        # 将参考身体对齐到目标 root
-        aligned_body_pos_w = target_root_pos.unsqueeze(1) + \
-            quat_apply_inverse(
-                quat_mul(quat_conjugate(target_root_quat), ref_root_quat).unsqueeze(1),
-                ref_body_pos - ref_root_pos.unsqueeze(1),
-            )
+        # Align reference bodies to target root
+        aligned_body_pos_w = align_pos_between_roots(
+            ref_body_pos, ref_root_pos, ref_root_quat, target_root_pos, target_root_quat
+        )
 
-        # 取匹配的关键身体
-        robot_body = self.command_manager.robot_body_link_pos_w[
+        # Matched key bodies
+        robot_body_pos_w = self.command_manager.asset.data.body_link_pos_w[
             :, self.body_indices_asset
         ]
 
-        error = (aligned_body_pos_w - robot_body).norm(dim=-1)
+        error = (aligned_body_pos_w - robot_body_pos_w).norm(dim=-1)
         return torch.exp(-error.mean(dim=1, keepdim=True) / self.sigma)
+
+    def debug_draw(self):
+        visualizer: "DebugVisualizer" = getattr(self.env, "visualizer", None)
+        if visualizer is None:
+            return
+
+        env_idx = visualizer.env_idx
+
+        # Target root for this step (aligned reference root)
+        target_root_pos = self.root_pos_buf[:, 0]
+        target_root_quat = self.root_quat_buf[:, 0]
+
+        # Reference body pose in the current frame
+        ref_body_pos = self.command_manager.ref_body_link_pos_w[
+            :, self.body_indices_motion
+        ]
+        ref_body_quat = self.command_manager.ref_body_link_quat_w[
+            :, self.body_indices_motion
+        ]
+        ref_root_pos = self.command_manager.ref_root_link_pos_w
+        ref_root_quat = self.command_manager.ref_root_link_quat_w
+
+        # Align reference bodies to target root
+        aligned_body_pos_w = align_pos_between_roots(
+            ref_body_pos, ref_root_pos, ref_root_quat, target_root_pos, target_root_quat
+        )
+
+        # aligned_body_pos_w = target_root_pos.unsqueeze(1) + \
+        #     quat_apply(
+        #         quat_mul(target_root_quat, quat_conjugate(ref_root_quat)).unsqueeze(1),
+        #         ref_body_pos - ref_root_pos.unsqueeze(1),
+        #     )
+
+        aligned_body_quat_w = align_quat_between_roots(
+            ref_body_quat, ref_root_quat, target_root_quat
+        )
+        aligned_body_pos_np = aligned_body_pos_w[env_idx].cpu().numpy()
+        aligned_body_rotm = matrix_from_quat(aligned_body_quat_w[env_idx]).cpu().numpy()
+
+        for i, body_name in enumerate(self.body_names):
+            visualizer.add_frame(
+                position=aligned_body_pos_np[i],
+                rotation_matrix=aligned_body_rotm[i],
+                scale=0.08,
+                label=f"aligned_{body_name}",
+                axis_colors=_DESIRED_FRAME_COLORS,
+            )
 
 
 class keypoint_ori_tracking_aligned(TrackReward):
     """
-    与 keypoint_pos_tracking_aligned 相同的 root 对齐与 look-ahead 机制，
-    但比较关键身体的朝向（四元数），使用轴角范数作误差。
+    Same root alignment and look-ahead mechanism as keypoint_pos_tracking_aligned,
+    but compares orientations (quaternions) of key bodies and uses axis-angle norm
+    as the error metric.
     """
 
     def __init__(
@@ -784,7 +915,13 @@ class keypoint_ori_tracking_aligned(TrackReward):
         self.body_indices_asset = [
             self.command_manager.asset.body_names.index(n) for n in matched_names
         ]
+        self.body_names = matched_names
+        self.num_bodies = len(self.body_indices_asset)
 
+        self.look_ahead_idx = torch.tensor(
+            [self.look_ahead - 1], device=self.device, dtype=torch.long
+        )
+        self.look_ahead_indices = torch.arange(self.look_ahead, device=self.device)
         self.root_pos_buf = torch.zeros(
             self.num_envs, self.look_ahead, 3, device=self.device
         )
@@ -793,51 +930,83 @@ class keypoint_ori_tracking_aligned(TrackReward):
         )
 
     def reset(self, env_ids):
-        self.root_pos_buf[env_ids] = self.command_manager.ref_root_pos_future_w[
-            env_ids, : self.look_ahead
+        future_ref_motion = self.command_manager.dataset.get_slice(
+            self.command_manager.motion_ids[env_ids],
+            self.command_manager.t[env_ids],
+            steps=self.look_ahead_indices,
+        )
+        ref_pos = future_ref_motion.body_pos_w[
+            :, :, self.command_manager.root_body_idx_motion
+        ] + self.command_manager.env.scene.env_origins[env_ids].unsqueeze(1)
+        ref_quat = future_ref_motion.body_quat_w[
+            :, :, self.command_manager.root_body_idx_motion
         ]
-        self.root_quat_buf[env_ids] = self.command_manager.ref_root_quat_future_w[
-            env_ids, : self.look_ahead
-        ]
+        self.root_pos_buf[env_ids] = ref_pos
+        self.root_quat_buf[env_ids] = ref_quat
 
     def update(self):
-        self.root_pos_buf[:, :-1] = self.root_pos_buf[:, 1:]
-        self.root_quat_buf[:, :-1] = self.root_quat_buf[:, 1:]
+        # Shift buffer left
+        self.root_pos_buf[:, :-1] = self.root_pos_buf[:, 1:].clone()
+        self.root_quat_buf[:, :-1] = self.root_quat_buf[:, 1:].clone()
 
-        ref_pos_t = self.command_manager.ref_root_link_pos_w
-        ref_quat_t = self.command_manager.ref_root_link_quat_w
-        robot_pos = self.command_manager.robot_root_link_pos_w
-        robot_quat = self.command_manager.robot_root_link_quat_w
+        # Align current reference to robot (xy + yaw) and append new look-ahead frame
+        ref_pos_t = self.command_manager.ref_root_link_pos_w.clone()  # [N,3]
+        ref_quat_t = self.command_manager.ref_root_link_quat_w  # [N,4]
+        robot_pos_t = self.command_manager.robot_root_link_pos_w.clone()  # [N,3]
+        robot_quat_t = self.command_manager.robot_root_link_quat_w  # [N,4]
 
-        delta_yaw = quat_mul(yaw_quat(robot_quat), quat_conjugate(yaw_quat(ref_quat_t)))
+        ref_pos_t[:, 2] = 0.0
+        robot_pos_t[:, 2] = 0.0
+        ref_quat_t = yaw_quat(ref_quat_t)
+        robot_quat_t = yaw_quat(robot_quat_t)
 
-        max_future = self.command_manager.ref_root_pos_future_w.shape[1] - 1
-        idx = min(self.look_ahead - 1, max_future)
-        ref_pos_plus = self.command_manager.ref_root_pos_future_w[:, idx]
-        ref_quat_plus = self.command_manager.ref_root_quat_future_w[:, idx]
-
-        aligned_pos = quat_apply(delta_yaw, ref_pos_plus - ref_pos_t) + robot_pos
-        aligned_quat = quat_mul(delta_yaw, ref_quat_plus)
-
-        self.root_pos_buf[:, -1] = aligned_pos
-        self.root_quat_buf[:, -1] = aligned_quat
-
-    def compute(self):
-        target_root_pos = self.root_pos_buf[:, 0]
-        target_root_quat = self.root_quat_buf[:, 0]
-
-        ref_body_quat = self.command_manager.ref_body_link_quat_w
-        ref_root_quat = self.command_manager.ref_root_link_quat_w
-        ref_body_rel = quat_mul(ref_body_quat, quat_conjugate(ref_root_quat).unsqueeze(1))
-
-        delta_quat = quat_mul(target_root_quat, quat_conjugate(ref_root_quat))
-        aligned_body_quat = quat_mul(delta_quat.unsqueeze(1), ref_body_rel)
-
-        aligned_body_quat = aligned_body_quat[:, self.body_indices_motion]
-        robot_body_quat = self.command_manager.robot_body_link_quat_w[
-            :, self.body_indices_asset
+        look_ahead_motion = self.command_manager.dataset.get_slice(
+            self.command_manager.motion_ids,
+            self.command_manager.t,
+            steps=self.look_ahead_idx,
+        )
+        ref_pos_look_ahead = (
+            look_ahead_motion.body_pos_w[
+                :, 0, self.command_manager.root_body_idx_motion
+            ]
+            + self.command_manager.env.scene.env_origins
+        )
+        ref_quat_look_ahead = look_ahead_motion.body_quat_w[
+            :, 0, self.command_manager.root_body_idx_motion
         ]
 
-        diff = axis_angle_from_quat(quat_mul(aligned_body_quat, quat_conjugate(robot_body_quat)))
+        aligned_root_pos_w = align_pos_between_roots(
+            ref_pos_look_ahead.unsqueeze(1),
+            ref_pos_t,
+            ref_quat_t,
+            robot_pos_t,
+            robot_quat_t,
+        ).squeeze(1)
+        aligned_root_quat_w = align_quat_between_roots(
+            ref_quat_look_ahead.unsqueeze(1), ref_quat_t, robot_quat_t
+        ).squeeze(1)
+
+        self.root_pos_buf[:, -1] = aligned_root_pos_w
+        self.root_quat_buf[:, -1] = aligned_root_quat_w
+
+    def compute(self):
+        target_root_quat = self.root_quat_buf[:, 0]
+
+        ref_body_quat = self.command_manager.ref_body_link_quat_w[
+            :, self.body_indices_motion
+        ]
+        ref_root_quat = self.command_manager.ref_root_link_quat_w
+
+        # Align reference bodies to target root
+        aligned_body_quat_w = align_quat_between_roots(
+            ref_body_quat, ref_root_quat, target_root_quat
+        )
+
+        robot_body_quat_w = self.command_manager.asset.data.body_link_quat_w[
+            :, self.body_indices_asset
+        ]
+        diff = axis_angle_from_quat(
+            quat_mul(quat_conjugate(aligned_body_quat_w), robot_body_quat_w)
+        )
         error = diff.norm(dim=-1)
         return torch.exp(-error.mean(dim=1, keepdim=True) / self.sigma)

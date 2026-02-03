@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.distributions as D
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 import warnings
 import torch.utils._pytree as pytree
 import copy
@@ -22,6 +24,7 @@ from collections import OrderedDict
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
+import active_adaptation as aa
 
 torch.set_float32_matmul_precision("high")
 
@@ -210,9 +213,9 @@ class PPOROA(TensorDictModuleBase):
 
         # build actor
         if cfg.phase == "train" and cfg.residual_action:
-            assert (
-                REF_JPOS_KEY in observation_spec
-            ), f"{REF_JPOS_KEY} should be in observation_spec"
+            assert REF_JPOS_KEY in observation_spec, (
+                f"{REF_JPOS_KEY} should be in observation_spec"
+            )
 
             class RefJointPos(nn.Module):
                 def forward(self, ref_jpos, action):
@@ -287,12 +290,12 @@ class PPOROA(TensorDictModuleBase):
 
         # build estimator
         if self.cfg.phase in ["train_est", "adapt_est"]:
-            assert (
-                OBJECT_KEY in observation_spec
-            ), f"{OBJECT_KEY} obs needed for estimator"
-            assert (
-                DEPTH_KEY in observation_spec
-            ), f"{DEPTH_KEY} obs needed for estimator"
+            assert OBJECT_KEY in observation_spec, (
+                f"{OBJECT_KEY} obs needed for estimator"
+            )
+            assert DEPTH_KEY in observation_spec, (
+                f"{DEPTH_KEY} obs needed for estimator"
+            )
 
             mlp = make_mlp([latent_dim], norm=self.cfg.layer_norm)
             cnn = nn.Sequential(
@@ -350,6 +353,10 @@ class PPOROA(TensorDictModuleBase):
         self.apply(init_)
         self.adapt_ema = copy.deepcopy(self.adapt_module).requires_grad_(False)
 
+        # distributed setup
+        if aa.is_distributed():
+            self._wrap_ddp(local_rank=aa.get_local_rank())
+
         self.lr_policy = cfg.lr
         if self.cfg.phase == "train":
             policy_params = [
@@ -393,6 +400,39 @@ class PPOROA(TensorDictModuleBase):
                 lr=cfg.lr,
             )
         self.num_updates = 0
+
+    def _wrap_ddp(self, local_rank: int):
+        ddp_kwargs = dict(
+            device_ids=[local_rank],
+            output_device=local_rank,
+            broadcast_buffers=True,
+            find_unused_parameters=False,
+        )
+
+        class DDPWithAttr(DDP):
+            def __getattr__(self, name: str):
+                try:
+                    return super().__getattr__(name)
+                except AttributeError:
+                    if self.module is not None and hasattr(self.module, name):
+                        return getattr(self.module, name)
+                    raise
+
+        def wrap_td_module(module):
+            """Wrap a TensorDict-compatible module with DDP while keeping in/out metadata."""
+            ddp = DDPWithAttr(module, **ddp_kwargs)
+            return ddp
+
+        self.actor = wrap_td_module(self.actor)
+        self.actor_adapt = wrap_td_module(self.actor_adapt)
+        self.encoder_priv = wrap_td_module(self.encoder_priv)
+        self.critic = wrap_td_module(self.critic)
+        self.adapt_module = wrap_td_module(self.adapt_module)
+        if hasattr(self, "estimator"):
+            self.estimator = wrap_td_module(self.estimator)
+        if hasattr(self, "adapt_ema"):
+            # EMA is eval-only; keep on same device but don't wrap to avoid grads
+            self.adapt_ema = self.adapt_ema.to(self.device)
 
     def make_tensordict_primer(self):
         return TensorDictPrimer({}, reset_key="done")
@@ -445,6 +485,14 @@ class PPOROA(TensorDictModuleBase):
 
         self.num_updates += 1
 
+        # periodic parameter broadcast for shared normalizers
+        if aa.is_distributed():
+            for m in [self.value_norm]:
+                for p in m.parameters():
+                    dist.all_reduce(p, op=dist.ReduceOp.AVG)
+                for b in m.buffers():
+                    dist.all_reduce(b, op=dist.ReduceOp.AVG)
+
         actor = self.actor if self.cfg.phase == "train" else self.actor_adapt
         action_std = actor.module[0][2].module.actor_std.detach()
         for joint_name, std in zip(self.joint_names, action_std):
@@ -467,6 +515,8 @@ class PPOROA(TensorDictModuleBase):
 
                 if self.desired_kl is not None:  # adaptive learning rate
                     kl = infos[-1]["actor/kl"]
+                    if aa.is_distributed():
+                        dist.all_reduce(kl, op=dist.ReduceOp.AVG)
                     if kl > self.desired_kl * 2.0:
                         self.lr_policy = max(1e-5, self.lr_policy / 1.5)
                     elif kl < self.desired_kl / 2.0 and kl > 0.0:
@@ -613,8 +663,34 @@ class PPOROA(TensorDictModuleBase):
 
         # Compute and normalize the advantages
         # [num_steps, num_envs, num_reward_groups]
+        def _global_mean_std(x, mask):
+            # x: [n_envs, train_every, 1]
+            # mask: [n_envs, train_every] bool
+            if aa.is_distributed():
+                local_count = mask.sum()
+                local_sum = (x * mask.unsqueeze(-1)).sum(dim=(0, 1))
+                local_sum_sq = (x * x * mask.unsqueeze(-1)).sum(dim=(0, 1))
+                expand_count = local_count.float().expand_as(local_sum)
+
+                stats = torch.stack([local_sum, local_sum_sq, expand_count])
+                dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+                global_sum, global_sum_sq, global_count = stats
+                global_count.clamp_min_(1)
+
+                mean = global_sum / global_count
+                var = (global_sum_sq / global_count) - (mean * mean)
+                std = var.clamp_min(0.0).sqrt()
+            else:
+                mean = x.mean(dim=(0, 1))
+                std = x.std(dim=(0, 1))
+            return mean, std
+
+        is_init = tensordict["is_init"].squeeze(-1)
+        mask = ~is_init  # [T, B]
+
         if self.cfg.normalize_before_sum:  # normalize, scale, sum
-            adv_norm = (adv - adv.mean(dim=(0, 1))) / (adv.std(dim=(0, 1)) + 0.01)
+            mean, std = _global_mean_std(adv, mask)
+            adv_norm = (adv - mean) / (std + 1e-5)
             adv_norm *= self.reward_scales
             # [num_steps, num_envs, num_reward_groups]
             adv_norm_sum = adv_norm.sum(dim=2, keepdim=True)
@@ -623,10 +699,8 @@ class PPOROA(TensorDictModuleBase):
         else:  # scale, sum, normalize
             adv *= self.reward_scales
             adv_sum = adv.sum(dim=2, keepdim=True)
-            # [num_steps, num_envs, 1]
-            adv_sum_norm = (adv_sum - adv_sum.mean(dim=(0, 1))) / (
-                adv_sum.std(dim=(0, 1)) + 1e-8
-            )
+            mean, std = _global_mean_std(adv_sum, mask)
+            adv_sum_norm = (adv_sum - mean) / (std + 1e-5)
             # [num_steps, num_envs, 1]
             adv_final = adv_sum_norm
 
@@ -701,13 +775,6 @@ class PPOROA(TensorDictModuleBase):
         with torch.no_grad():
             explained_var = 1 - value_loss / b_returns[valid].var(dim=0)
             clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
-            # loc, scale = dist.loc, dist.scale
-            # kl = torch.sum(
-            #     torch.log(scale) - torch.log(scale_old)
-            #     + (torch.square(scale_old) + torch.square(loc_old - loc)) / (2.0 * torch.square(scale))
-            #     - 0.5,
-            #     dim=-1,
-            # ).mean()
             dist_old = self.dist_cls(**dist_kwargs_old)
             kl = D.kl_divergence(dist_old, dist).mean()
 
@@ -753,7 +820,10 @@ class PPOROA(TensorDictModuleBase):
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
-                module.load_state_dict(_state_dict, strict=strict)
+                if isinstance(module, DDP):
+                    module.module.load_state_dict(_state_dict, strict=strict)
+                else:
+                    module.load_state_dict(_state_dict, strict=strict)
                 succeed_keys.append(name)
             except Exception as e:
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
