@@ -79,18 +79,22 @@ command:
     z: [-0.01, 0.01]
     roll: [-0.1, 0.1]
     pitch: [-0.1, 0.1]
-    yaw: [-0.2, 0.2]
+    yaw: [-0.1, 0.1]
 
   velocity_range:
-    x: [-0.2, 0.2]
-    y: [-0.2, 0.2]
-    z: [-0.2, 0.2]
-    roll: [-0.5, 0.5]
-    pitch: [-0.5, 0.5]
-    yaw: [-0.5, 0.5]
+    x: [-0.1, 0.1]
+    y: [-0.1, 0.1]
+    z: [-0.1, 0.1]
+    roll: [-0.1, 0.1]
+    pitch: [-0.1, 0.1]
+    yaw: [-0.1, 0.1]
 
   init_joint_pos_noise: 0.1
   init_joint_vel_noise: 0.1
+
+  rewind_prob: 0.0
+  rewind_steps_range: [25, 125]
+
 
   future_steps: [1, 2, 4, 16]
 
@@ -133,38 +137,52 @@ reward:
     tracking_root_pos(keypoint_pos_tracking_product):
       body_names: ["torso_link"]
       weight: 0.5
-      sigma: 0.6
+      sigma: 0.3
     tracking_root_ori(keypoint_ori_tracking_product):
       body_names: ["torso_link"]
       weight: 0.5
-      sigma: 0.8
+      sigma: 0.4
 
     tracking_body_pos(keypoint_pos_tracking_local_product):
       body_names: [".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link", ".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link"]
       weight: 1.0
-      sigma: 0.6
+      sigma: 0.3
     tracking_body_ori(keypoint_ori_tracking_local_product):
       body_names: [".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link", ".*_hip_pitch_link", ".*_knee_link", ".*_ankle_roll_link"]
       weight: 1.0
-      sigma: 0.8
+      sigma: 0.4
 
     tracking_body_linvel(keypoint_lin_vel_tracking_product):
       body_names: ["pelvis", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link", "torso_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"]
       weight: 0.5
-      sigma: 0.5
+      sigma: 1.0
+      enabled: false
     tracking_body_angvel(keypoint_ang_vel_tracking_product):
       body_names: ["pelvis", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link", "torso_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"]
       weight: 0.5
       sigma: 2.5
+      enabled: false
+
+    tracking_body_linvel_local(keypoint_lin_vel_tracking_local_product):
+      body_names: ["pelvis", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link", "torso_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.5
+      sigma: 1.0
+      # enabled: false
+    tracking_body_angvel_local(keypoint_ang_vel_tracking_local_product):
+      body_names: ["pelvis", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link", "torso_link", ".*_shoulder_pitch_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.5
+      sigma: 2.5
+      # enabled: false
 
   loco:
     action_rate_l2:     {weight: 0.05, enabled: true}
     joint_pos_limits:   {weight: 10.0, joint_names: ".*", soft_factor: 0.9, enabled: true}
     joint_torque_limits: {weight: 0.01, enabled: true, soft_factor: 0.6}
-    feet_slip:          {weight: 0.5, tolerance: 0.0, enabled: true, body_names: .*ankle_roll_link}
-    feet_air_time:      {weight: 5.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.1}
+
+    feet_slip:          {weight: 0.5, tolerance: 0.0, enabled: false, body_names: .*ankle_roll_link}
+    feet_air_time:      {weight: 5.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.8}
     feet_air_time_mjlab: {weight: 2.0, enabled: false, min_thres: 0.05, max_thres: 1.0}
-    # survival:           {weight: 1.0, enabled: true}
+    survival:           {weight: 4.0, enabled: true}
   debug:
     joint_pos_limits:   {weight: 1.0, enabled: false, soft_factor: 0.9, joint_names: .*}
     root_pos_error(keypoint_pos_error):             {body_names: ["pelvis"], weight: 1.0, enabled: false}
@@ -199,8 +217,8 @@ termination:
   # cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8, is_timeout: true}
   # cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6, is_timeout: true}
 
-  # cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
-  # cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
+  cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
+  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
 
   cum_body_pos_error_local: {body_names: ".*",  min_steps: 25, threshold: 0.8}
   cum_body_ori_error_local: {body_names: ".*",  min_steps: 25, threshold: 1.6}

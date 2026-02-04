@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.distributions as D
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+import numpy as np
 import warnings
 import torch.utils._pytree as pytree
 import copy
@@ -50,12 +51,14 @@ class PPOConfig:
 
     # lr
     lr: float = 3e-4
-    desired_kl: float | None = 0.01  # None
+    desired_kl: float | None = 0.01
 
     # exploration
-    entropy_coef: float = 0.004
+    entropy_coef_start: float = 0.004
+    entropy_coef_end: float = 0.004
+    entropy_decay_iters: int = 3000
     init_noise_scale: float = 1.0
-    load_noise_scale: float | None = 0.5
+    load_noise_scale: float | None = None
 
     clip_neg_reward: bool = False
     normalize_before_sum: bool = False
@@ -77,39 +80,48 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store(
     "ppo_roa_train",
-    node=PPOConfig(phase="train", vecnorm="train", entropy_coef=0.004),
+    node=PPOConfig(
+        phase="train", vecnorm="train", entropy_coef_start=0.004, entropy_coef_end=0.001
+    ),
     group="algo",
 )
 cs.store(
     "ppo_roa_adapt",
-    node=PPOConfig(phase="adapt", vecnorm="eval", entropy_coef=0.00),
+    node=PPOConfig(
+        phase="adapt", vecnorm="eval", entropy_coef_start=0.00, entropy_coef_end=0.00
+    ),
     group="algo",
 )
 cs.store(
     "ppo_roa_finetune",
-    node=PPOConfig(phase="finetune", vecnorm="eval", entropy_coef=0.004),
-    group="algo",
-)
-cs.store(
-    "ppo_roa_train_est",
     node=PPOConfig(
-        phase="train_est",
+        phase="finetune",
         vecnorm="eval",
-        entropy_coef=0.00,
-        in_keys=(CMD_KEY, OBS_KEY, OBJECT_KEY, OBS_PRIV_KEY, DEPTH_KEY),
+        entropy_coef_start=0.002,
+        entropy_coef_end=0.0005,
     ),
     group="algo",
 )
-cs.store(
-    "ppo_roa_adapt_est",
-    node=PPOConfig(
-        phase="adapt_est",
-        vecnorm="eval",
-        entropy_coef=0.00,
-        in_keys=(CMD_KEY, OBS_KEY, OBJECT_KEY, OBS_PRIV_KEY, DEPTH_KEY),
-    ),
-    group="algo",
-)
+# cs.store(
+#     "ppo_roa_train_est",
+#     node=PPOConfig(
+#         phase="train_est",
+#         vecnorm="eval",
+#         entropy_coef=0.00,
+#         in_keys=(CMD_KEY, OBS_KEY, OBJECT_KEY, OBS_PRIV_KEY, DEPTH_KEY),
+#     ),
+#     group="algo",
+# )
+# cs.store(
+#     "ppo_roa_adapt_est",
+#     node=PPOConfig(
+#         phase="adapt_est",
+#         vecnorm="eval",
+#         entropy_coef=0.00,
+#         in_keys=(CMD_KEY, OBS_KEY, OBJECT_KEY, OBS_PRIV_KEY, DEPTH_KEY),
+#     ),
+#     group="algo",
+# )
 
 
 class PPOROA(TensorDictModuleBase):
@@ -506,6 +518,13 @@ class PPOROA(TensorDictModuleBase):
             tensordict, self.critic, "adv", "ret", update_value_norm=True
         )
 
+        current_iter = self.env.current_iter
+        progress = float(np.clip(current_iter / self.cfg.entropy_decay_iters, 0.0, 1.0))
+        self.entropy_coef = (
+            self.cfg.entropy_coef_start
+            + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
+        )
+
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
@@ -527,7 +546,7 @@ class PPOROA(TensorDictModuleBase):
 
         infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
         infos["actor/lr"] = self.lr_policy
-        infos["actor/entropy_coef"] = self.cfg.entropy_coef
+        infos["actor/entropy_coef"] = self.entropy_coef
 
         ret = tensordict["ret"]
         ret_mean = ret.mean(dim=(0, 1))
@@ -745,7 +764,7 @@ class PPOROA(TensorDictModuleBase):
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param)
         policy_loss = -(torch.min(surr1, surr2)[valid]).mean()
-        entropy_loss = -self.cfg.entropy_coef * entropy
+        entropy_loss = -self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]

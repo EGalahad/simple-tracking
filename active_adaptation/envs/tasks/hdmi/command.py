@@ -16,8 +16,6 @@ from mjlab.utils.lab_api.math import (
     sample_uniform,
     quat_from_euler_xyz,
     quat_mul,
-    quat_apply,
-    quat_apply_inverse,
     matrix_from_quat,
 )
 from tensordict import TensorDict
@@ -33,6 +31,7 @@ _DESIRED_FRAME_COLORS = (
 @dataclass
 class VizCfg:
     mode: Literal["ghost", "frames"] = "ghost"
+    # mode: Literal["ghost", "frames"] = "frames"
     ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
 
 
@@ -46,7 +45,6 @@ class RobotTracking(Command):
         # reset parameters
         root_body_name: str = "pelvis",
         anchor_body_name: str = "torso_link",
-        reset_range: Tuple[float, float] | None = None,
         pose_range: Dict[str, Tuple[float, float]] = {
             "x": (-0.0, 0.0),
             "y": (-0.0, 0.0),
@@ -71,6 +69,8 @@ class RobotTracking(Command):
         sample_motion: bool = False,
         replay_motion: bool = False,
         record_motion: bool = False,
+        rewind_prob: float = 0.0,
+        rewind_steps_range: Tuple[int, int] = (25, 125),
         viz: VizCfg | Dict | None = None,
     ):
         from . import observations
@@ -84,7 +84,7 @@ class RobotTracking(Command):
             target_fps=int(1 / self.env.step_dt),
         ).to(self.device)
 
-        # Set tracking body and joint names for observation and termination
+        # Set tracking keypoint and joint names for observation and termination
         self.tracking_keypoint_names = self.asset.find_bodies(tracking_keypoint_names)[
             1
         ]
@@ -135,8 +135,6 @@ class RobotTracking(Command):
                 0, self.dataset.lengths[0], (self.num_envs,), device=self.device
             )
 
-        self.reset_range = reset_range
-
         pose_range_list = [
             pose_range.get(key, (0.0, 0.0))
             for key in ["x", "y", "z", "roll", "pitch", "yaw"]
@@ -150,6 +148,11 @@ class RobotTracking(Command):
 
         self.init_joint_pos_noise = init_joint_pos_noise
         self.init_joint_vel_noise = init_joint_vel_noise
+
+        self.rewind_prob = rewind_prob
+        self.rewind_steps_range = list(rewind_steps_range)
+        assert self.rewind_steps_range[0] >= 0
+        assert self.rewind_steps_range[1] > self.rewind_steps_range[0]
 
         self.first_sample_motion = True
         self.sample_motion = sample_motion
@@ -194,14 +197,17 @@ class RobotTracking(Command):
         else:
             motion_len = self.motion_len[env_ids]
 
-        if self.reset_range is None:
-            max_len = motion_len - self.future_steps[-1]
-            start_phase = torch.rand(len(env_ids), device=self.device)
-            start_t = (start_phase * max_len).long()
-        else:
-            start_t = torch.randint(
-                *self.reset_range, (len(env_ids),), device=self.device
-            )
+        max_len = motion_len - self.future_steps[-1]
+        start_phase = torch.rand(len(env_ids), device=self.device)
+        start_t = (start_phase * max_len).long()
+
+        terminated_t = self.t[env_ids]
+        rewind_mask = torch.rand(len(env_ids), device=self.device) < self.rewind_prob
+        rewind_steps = torch.randint(
+            *self.rewind_steps_range, (len(env_ids),), device=self.device
+        )
+        rewind_t = torch.clamp(terminated_t - rewind_steps, min=0)  # , max=max_len - 1)
+        start_t = torch.where(rewind_mask, rewind_t, start_t)
 
         if not self.env.training or self.record_motion:
             start_t.fill_(0)
