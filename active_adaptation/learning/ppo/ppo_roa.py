@@ -11,8 +11,10 @@ import copy
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
 from torchrl.envs.transforms import TensorDictPrimer
+
 from tensordict import TensorDict
 from tensordict.nn import (
+    set_composite_lp_aggregate,
     TensorDictModuleBase,
     TensorDictModule as Mod,
     TensorDictSequential as Seq,
@@ -48,6 +50,7 @@ class PPOConfig:
     lmbda: float = 0.95
 
     residual_action: bool = True
+    finetune_adapt_module: bool = True
 
     # lr
     lr: float = 3e-4
@@ -98,7 +101,7 @@ cs.store(
         phase="finetune",
         vecnorm="eval",
         entropy_coef_start=0.002,
-        entropy_coef_end=0.0005,
+        entropy_coef_end=0.0001,
     ),
     group="algo",
 )
@@ -454,13 +457,14 @@ class PPOROA(TensorDictModuleBase):
 
         if self.cfg.phase == "train":
             modules.append(self.encoder_priv)
-            modules.append(self.actor)
             modules.append(self.adapt_module)
+            modules.append(self.actor)
         elif self.cfg.phase == "adapt":
             modules.append(self.adapt_module)
             modules.append(self.actor_adapt)
         elif self.cfg.phase == "finetune":
-            modules.append(self.adapt_ema)
+            # modules.append(self.adapt_ema)
+            modules.append(self.adapt_module)
             modules.append(self.actor_adapt)
         elif self.cfg.phase == "train_est":
             modules.append(self.adapt_ema)
@@ -468,12 +472,18 @@ class PPOROA(TensorDictModuleBase):
         elif self.cfg.phase == "adapt_est":
             modules.append(self.estimator)
             modules.append(self.actor_adapt)
-
-        out_keys = ["sample_log_prob", "action"] + self.dist_keys
-        if self.cfg.phase == "finetune":
-            out_keys.append(PRIV_PRED_KEY)
-        if self.cfg.phase == "adapt_est":
-            out_keys.append("priv_est")
+        
+        if mode == "deploy":
+            # remove the ProbabilisticActor wrapper
+            modules[-1] = modules[-1].module[0]
+            modules.append(MeanAction())
+            out_keys = [ACTION_KEY]
+        else:
+            out_keys = ["sample_log_prob", ACTION_KEY] + self.dist_keys
+            if self.cfg.phase == "finetune":
+                out_keys.append(PRIV_PRED_KEY)
+            if self.cfg.phase == "adapt_est":
+                out_keys.append("priv_est")
 
         policy = Seq(*modules, selected_out_keys=out_keys)
         return policy
@@ -488,7 +498,7 @@ class PPOROA(TensorDictModuleBase):
             info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "finetune":
             info.update(self.train_policy(tensordict.copy()))
-            info.update(self.train_adapt(tensordict.copy()))
+            # info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "train_est":
             info.update(self.train_estimator(tensordict.copy()))
         elif self.cfg.phase == "adapt_est":
@@ -742,6 +752,8 @@ class PPOROA(TensorDictModuleBase):
             self.encoder_priv(tensordict)
             actor = self.actor
         elif self.cfg.phase == "finetune":
+            if self.cfg.finetune_adapt_module:
+                self.adapt_module(tensordict)
             actor = self.actor_adapt
         elif self.cfg.phase == "adapt_est":
             actor = self.actor_adapt
@@ -749,7 +761,8 @@ class PPOROA(TensorDictModuleBase):
             raise ValueError(f"Invalid phase: {self.cfg.phase}")
 
         dist: D.Independent = actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        with set_composite_lp_aggregate(True):
+            log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
 
         if self.cfg.phase == "train":
@@ -849,7 +862,11 @@ class PPOROA(TensorDictModuleBase):
                 failed_keys.append(name)
         print(f"Successfully loaded {succeed_keys}.")
 
-        self.env.set_progress(state_dict.get("last_iter", 0))
+        start_iter = state_dict.get("last_iter", 0)
+        if self.cfg.phase != state_dict["last_phase"]:
+            start_iter = 0
+        self.env.set_progress(start_iter)
+
         lr_policy = state_dict.get("lr_policy", None)
         if lr_policy is not None:
             self.lr_policy = lr_policy

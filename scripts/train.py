@@ -1,13 +1,9 @@
-import torch
-
 import hydra
 import wandb
 import logging
 import os
 import time
 import datetime
-import shutil
-import inspect
 
 from omegaconf import OmegaConf, DictConfig
 from collections import OrderedDict
@@ -16,14 +12,16 @@ from setproctitle import setproctitle
 
 import active_adaptation as aa
 import mjlab
+
+import torch
 import torch.distributed as dist
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
-from tensordict.nn import TensorDictModuleBase
+from tensordict.nn import TensorDictModuleBase, set_composite_lp_aggregate
 from tensordict import TensorDict
 
 # local import
-from scripts.helpers import make_env_policy, EpisodeStats, evaluate
+from scripts.helpers import make_env_policy, EpisodeStats
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -32,6 +30,7 @@ torch.backends.cudnn.benchmark = False
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
+# set_composite_lp_aggregate(True).set()
 
 
 @hydra.main(config_path=CONFIG_PATH, config_name="train", version_base=None)
@@ -132,7 +131,7 @@ def main(cfg: DictConfig):
         "adapt_hx",
     ]
 
-    with torch.inference_mode():
+    with torch.inference_mode(), set_composite_lp_aggregate(True):
         tmp_carry = rollout_policy(carry.clone(False))
         tmp_td, _ = env.step_and_maybe_reset(tmp_carry.clone(False))
         tmp_td["next"] = tmp_td["next"].select(*next_saved_keys, strict=False)
@@ -173,7 +172,8 @@ def main(cfg: DictConfig):
             torch.compiler.cudagraph_mark_step_begin()  # for compiled policy
             env.set_progress(start_iter + i)
             for step in range(cfg.algo.train_every):
-                carry = rollout_policy(carry)
+                with set_composite_lp_aggregate(True):
+                    carry = rollout_policy(carry)
                 td, carry = env.step_and_maybe_reset(carry)
                 td["next"] = td["next"].select(*next_saved_keys, strict=False)
                 data_buf[:, step] = td

@@ -1010,3 +1010,123 @@ class keypoint_ori_tracking_aligned(TrackReward):
         )
         error = diff.norm(dim=-1)
         return torch.exp(-error.mean(dim=1, keepdim=True) / self.sigma)
+
+class keypoint_pos_tracking_pos_aligned(TrackReward):
+    """
+    Align the reference motion root with the current robot root in xy + yaw and
+    maintain a look-ahead buffer. Aligned future roots are pushed into the buffer,
+    and the current step uses entry 0 in the buffer as the target.
+    """
+
+    def __init__(
+        self,
+        body_names: List[str] | str | None = None,
+        sigma: float = 0.3,
+        look_ahead: int = 50,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.sigma = sigma
+        self.look_ahead = int(look_ahead)
+
+        if body_names is None:
+            body_names = self.command_manager.tracking_keypoint_names
+
+        body_indices_motion, matched_names_motion = resolve_matching_names(
+            body_names, self.command_manager.tracking_keypoint_names
+        )
+        body_indices_asset, matched_names_asset = resolve_matching_names(
+            body_names, self.command_manager.asset.body_names
+        )
+        matched_names = sorted(set(matched_names_motion) & set(matched_names_asset))
+        assert matched_names, "keypoint_pos_tracking_aligned: no body matched"
+
+        self.body_indices_motion = [
+            self.command_manager.tracking_keypoint_names.index(n) for n in matched_names
+        ]
+        self.body_indices_asset = [
+            self.command_manager.asset.body_names.index(n) for n in matched_names
+        ]
+        self.body_names = matched_names
+        self.num_bodies = len(self.body_indices_asset)
+
+        # buffers
+        self.look_ahead_idx = torch.tensor(
+            [self.look_ahead - 1], device=self.device, dtype=torch.long
+        )
+        self.look_ahead_indices = torch.arange(self.look_ahead, device=self.device)
+        self.root_pos_buf = torch.zeros(
+            self.num_envs, self.look_ahead, 3, device=self.device
+        )
+
+    # --- lifecycle hooks --- #
+    def reset(self, env_ids):
+        future_ref_motion = self.command_manager.dataset.get_slice(
+            self.command_manager.motion_ids[env_ids],
+            self.command_manager.t[env_ids],
+            steps=self.look_ahead_indices,
+        )
+        ref_pos = future_ref_motion.body_pos_w[
+            :, :, self.command_manager.root_body_idx_motion
+        ] + self.command_manager.env.scene.env_origins[env_ids].unsqueeze(1)
+        self.root_pos_buf[env_ids] = ref_pos
+
+    def update(self):
+        # Shift buffer left
+        self.root_pos_buf[:, :-1] = self.root_pos_buf[:, 1:].clone()
+
+        # Align current reference to robot (xy) and append new look-ahead frame
+        ref_pos_t = self.command_manager.ref_root_link_pos_w.clone()  # [N,3]
+        ref_quat_t = self.command_manager.ref_root_link_quat_w  # [N,4]
+        robot_pos_t = self.command_manager.robot_root_link_pos_w.clone()  # [N,3]
+
+        ref_pos_t[:, 2] = 0.0
+        robot_pos_t[:, 2] = 0.0
+        ref_quat_t = yaw_quat(ref_quat_t)
+
+        look_ahead_motion = self.command_manager.dataset.get_slice(
+            self.command_manager.motion_ids,
+            self.command_manager.t,
+            steps=self.look_ahead_idx,
+        )
+        ref_pos_look_ahead = (
+            look_ahead_motion.body_pos_w[
+                :, 0, self.command_manager.root_body_idx_motion
+            ]
+            + self.command_manager.env.scene.env_origins
+        )
+
+        aligned_root_pos_w = align_pos_between_roots(
+            ref_pos_look_ahead.unsqueeze(1),
+            ref_pos_t,
+            ref_quat_t,
+            robot_pos_t,
+            ref_quat_t,
+        ).squeeze(1)
+
+        self.root_pos_buf[:, -1] = aligned_root_pos_w
+
+    # --- reward --- #
+    def compute(self):
+        # Target root for this step
+        target_root_pos = self.root_pos_buf[:, 0]
+
+        # Reference body positions (current frame)
+        ref_body_pos = self.command_manager.ref_body_link_pos_w[
+            :, self.body_indices_motion
+        ]
+        ref_root_pos = self.command_manager.ref_root_link_pos_w
+        ref_root_quat = self.command_manager.ref_root_link_quat_w
+
+        # Align reference bodies to target root
+        aligned_body_pos_w = align_pos_between_roots(
+            ref_body_pos, ref_root_pos, ref_root_quat, target_root_pos, ref_root_quat
+        )
+
+        # Matched key bodies
+        robot_body_pos_w = self.command_manager.asset.data.body_link_pos_w[
+            :, self.body_indices_asset
+        ]
+
+        error = (aligned_body_pos_w - robot_body_pos_w).norm(dim=-1)
+        return torch.exp(-error.mean(dim=1, keepdim=True) / self.sigma)

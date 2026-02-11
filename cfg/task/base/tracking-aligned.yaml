@@ -135,11 +135,11 @@ observation:
 # Common Reward section
 reward:
   tracking:
-    tracking_root_pos(keypoint_pos_tracking_product):
+    tracking_root_pos(keypoint_pos_tracking_aligned):
       body_names: ["torso_link"]
       weight: 0.5
       sigma: 0.3
-    tracking_root_ori(keypoint_ori_tracking_product):
+    tracking_root_ori(keypoint_ori_tracking_aligned):
       body_names: ["torso_link"]
       weight: 0.5
       sigma: 0.4
@@ -190,7 +190,8 @@ reward:
     joint_torque_limits: {weight: 0.01, enabled: true, soft_factor: 0.6}
 
     feet_slip:          {weight: 0.5, tolerance: 0.0, enabled: false, body_names: .*ankle_roll_link}
-    feet_air_time:      {weight: 8.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.8}
+    feet_air_time:      {weight: 4.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.8}
+    feet_air_time_mjlab: {weight: 2.0, enabled: false, min_thres: 0.05, max_thres: 1.0}
     survival:           {weight: 4.0, enabled: true}
   debug:
     joint_pos_limits:   {weight: 1.0, enabled: false, soft_factor: 0.9, joint_names: .*}
@@ -223,8 +224,8 @@ randomization:
 termination:
   motion_timeout:           {is_timeout: true}
 
-  cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
-  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
+  # cum_body_pos_error:       {body_names: "torso_link",  min_steps: 25, threshold: 0.8}
+  # cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}
 
   cum_body_pos_error_local: {body_names: ".*",  min_steps: 25, threshold: 0.8}
   cum_body_ori_error_local: {body_names: ".*",  min_steps: 25, threshold: 1.6}

@@ -1,5 +1,5 @@
 import torch
-from tensordict import TensorDictBase
+from tensordict import TensorDictBase, TensorDict
 from tensordict.nn import TensorDictModuleBase as ModBase
 from typing import TYPE_CHECKING
 from mjlab.actuator import BuiltinPositionActuatorCfg
@@ -32,9 +32,8 @@ def export_onnx(module: ModBase, td: TensorDictBase, path: str, meta=None):
 
     td = td.cpu().select(*module.in_keys, strict=True)
     module = module.cpu()
-    print(torch.__version__)
-    # breakpoint()
-    onnx_program = torch.onnx.dynamo_export(module, **td.to_dict())
+    export_opts = torch.onnx.ExportOptions(dynamic_shapes=False)
+    onnx_program = torch.onnx.dynamo_export(module, **td.to_dict(), export_options=export_opts)
     onnx_program.save(path)
     print(f"Exported ONNX model to {path}.")
 

@@ -1,0 +1,8 @@
+# @package task
+
+observation:
+  command:
+    ref_root_ori_future_b: {}
+
+termination:
+  cum_body_ori_error:       {body_names: "torso_link",  min_steps: 25, threshold: 1.6}

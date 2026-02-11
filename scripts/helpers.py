@@ -83,7 +83,8 @@ class ObsOODDetector(ModBase):
             obs = tensordict.get(in_key, None)
             if obs is not None:
                 ood_ratio = (
-                    (obs.abs() > self.sigma).float().mean(dim=tuple(range(1, obs.ndim)))
+                    # (obs.abs() > self.sigma).float().mean(dim=tuple(range(1, obs.ndim)))
+                    (obs.abs() > self.sigma).float().mean().unsqueeze(0)
                 )
                 tensordict.set(("next", f"{in_key}_ood_ratio"), ood_ratio)
                 tensordict.set(("next", in_key), obs)

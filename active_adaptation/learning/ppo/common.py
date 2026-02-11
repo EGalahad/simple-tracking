@@ -388,6 +388,14 @@ class CatTensors(ModBase):
             tensordict.exclude(*self.in_keys, inplace=True)
         return tensordict
 
+class MeanAction(ModBase):
+    in_keys = ["loc"]
+    out_keys = [ACTION_KEY]
+
+    def forward(self, td):
+        td[ACTION_KEY] = td["loc"]
+        return td
+                
 
 def collect_info(infos, prefix=""):
     return {prefix + k: v.mean().item() for k, v in torch.stack(infos).items()}
